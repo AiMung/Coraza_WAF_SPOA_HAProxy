@@ -1,0 +1,48 @@
+HTTP/1.0 403 Forbidden
+Cache-Control: no-cache
+Connection: close
+Content-Type: text/html; charset=UTF-8
+
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>403 Forbidden - Protected by Coraza WAF Shield</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif; }
+        body { background: #0b0f19; color: #f3f4f6; display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
+        .card { background: #111827; border: 1px solid #1f2937; border-radius: 16px; padding: 40px; max-width: 580px; width: 100%; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7); text-align: center; }
+        .shield-icon { width: 72px; height: 72px; background: rgba(239, 68, 68, 0.15); color: #ef4444; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 24px; }
+        .shield-icon svg { width: 40px; height: 40px; stroke: currentColor; fill: none; stroke-width: 2; }
+        h1 { font-size: 24px; font-weight: 700; color: #ffffff; margin-bottom: 12px; }
+        p { color: #9ca3af; font-size: 14px; line-height: 1.6; margin-bottom: 24px; }
+        .details { background: #1f2937; border-radius: 10px; padding: 16px; text-align: left; font-size: 13px; font-family: monospace; color: #d1d5db; margin-bottom: 24px; }
+        .details-item { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #374151; }
+        .details-item:last-child { border-bottom: none; }
+        .tag { color: #ef4444; font-weight: bold; }
+        .footer { font-size: 12px; color: #6b7280; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="shield-icon">
+            <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                <line x1="15" y1="9" x2="9" y2="15"></line>
+                <line x1="9" y1="9" x2="15" y2="15"></line>
+            </svg>
+        </div>
+        <h1>Yêu Cầu Bị Từ Chối (403 Forbidden)</h1>
+        <p>Hệ thống Tường lửa ứng dụng Web (WAF) đã phát hiện lưu lượng truy cập bất thường hoặc có dấu hiệu tấn công độc hại từ yêu cầu của bạn.</p>
+        <div class="details">
+            <div class="details-item"><span>Trạng thái:</span><span class="tag">403 Blocked</span></div>
+            <div class="details-item"><span>Engine:</span><span>Coraza SPOA v3 + OWASP CRS</span></div>
+            <div class="details-item"><span>Hành động:</span><span>Blocked & Event Logged</span></div>
+        </div>
+        <div class="footer">
+            Đồ án Tốt Nghiệp: Hệ Thống WAF Bảo Vệ Ứng Dụng Web với HAProxy & Coraza SPOA
+        </div>
+    </div>
+</body>
+</html>

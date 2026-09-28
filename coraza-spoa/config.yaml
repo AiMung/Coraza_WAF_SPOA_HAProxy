@@ -1,0 +1,10 @@
+# Coraza SPOA Server Configuration
+bind: "0.0.0.0:9000"
+log_level: "info"
+
+# Rules to include
+include:
+  - "/etc/coraza-spoa/coraza.conf"
+  - "/etc/coraza-spoa/rules/*.conf"
+  - "/etc/coraza-spoa/coreruleset/crs-setup.conf"
+  - "/etc/coraza-spoa/coreruleset/rules/*.conf"

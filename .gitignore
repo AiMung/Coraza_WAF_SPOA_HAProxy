@@ -1,0 +1,8 @@
+# Git ignore for WAF Project
+*.log
+*.sqlite
+*.db
+bin/
+dist/
+data/
+.env

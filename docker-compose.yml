@@ -1,0 +1,73 @@
+services:
+  # 1. Target Web Application (Protected Demo Web)
+  protected-app:
+    image: nginx:alpine
+    container_name: protected-app
+    restart: unless-stopped
+    volumes:
+      - ./protected-app:/usr/share/nginx/html:ro
+    networks:
+      - waf-net
+
+  # 2. Coraza SPOA WAF Engine (Go + OWASP CRS v4)
+  coraza-spoa:
+    build:
+      context: ./coraza-spoa
+      dockerfile: Dockerfile
+    container_name: coraza-spoa
+    restart: unless-stopped
+    volumes:
+      - ./coraza-spoa/config.yaml:/etc/coraza-spoa/config.yaml:ro
+      - ./coraza-spoa/coraza.conf:/etc/coraza-spoa/coraza.conf:ro
+      - ./coraza-spoa/rules:/etc/coraza-spoa/rules:ro
+      - coraza-logs:/var/log/coraza
+    networks:
+      - waf-net
+
+  # 3. HAProxy Reverse Proxy + SPOE Engine
+  haproxy:
+    image: haproxy:2.8-alpine
+    container_name: haproxy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - ./haproxy/spoe-coraza.conf:/usr/local/etc/haproxy/spoe-coraza.conf:ro
+      - ./haproxy/errors:/usr/local/etc/haproxy/errors:ro
+    depends_on:
+      - coraza-spoa
+      - protected-app
+    networks:
+      - waf-net
+
+  # 4. Go Backend Management API & aaWAF Dashboard UI
+  backend:
+    build:
+      context: .
+      dockerfile: ./backend/Dockerfile
+    container_name: waf-backend
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - coraza-logs:/var/log/coraza
+      - backend-data:/app/data
+      - ./frontend:/app/frontend:ro
+    environment:
+      - PORT=8080
+      - DB_PATH=/app/data/waf.db
+      - AUDIT_LOG_PATH=/var/log/coraza/audit.log
+      - FRONTEND_DIR=/app/frontend
+    depends_on:
+      - coraza-spoa
+    networks:
+      - waf-net
+
+networks:
+  waf-net:
+    driver: bridge
+
+volumes:
+  coraza-logs:
+  backend-data:
