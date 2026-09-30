@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -608,8 +609,16 @@ func AddIPRule(c *gin.Context) {
 
 	req.IP = strings.TrimSpace(req.IP)
 	if req.IP == "" || (req.RuleType != "blacklist" && req.RuleType != "whitelist") {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid IP or Rule Type"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Thiếu địa chỉ IP hoặc loại quy tắc không hợp lệ"})
 		return
+	}
+
+	// Strict IP & CIDR validation
+	if net.ParseIP(req.IP) == nil {
+		if _, _, err := net.ParseCIDR(req.IP); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Địa chỉ IP hoặc dải mạng CIDR không hợp lệ. Ví dụ đúng: 192.168.1.1 hoặc 192.168.1.0/24"})
+			return
+		}
 	}
 
 	var expiresAtVal *string

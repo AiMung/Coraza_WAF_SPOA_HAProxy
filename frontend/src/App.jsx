@@ -193,11 +193,24 @@ export default function App() {
     }
   };
 
+const isValidIPOrCIDR = (val) => {
+  if (!val || typeof val !== 'string') return false;
+  const s = val.trim();
+  const ipv4Regex = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(?:\/(?:[0-9]|[1-2][0-9]|3[0-2]))?$/;
+  const ipv6Regex = /^([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}(\/(12[0-8]|1[0-1][0-9]|[1-9]?[0-9]))?$/;
+  return ipv4Regex.test(s) || ipv6Regex.test(s) || s === '::1';
+};
+
   const handleDirectAddBlacklist = async (ip, reason = 'Blocked from Dashboard', duration = '15m') => {
     if (!ip) return;
+    const trimmed = ip.trim();
+    if (!isValidIPOrCIDR(trimmed)) {
+      showToast(`Địa chỉ IP không hợp lệ: "${trimmed}"`, 'err');
+      return;
+    }
     try {
-      await wafApi.addIpRule({ ip, rule_type: 'blacklist', reason, duration: duration || '15m' });
-      showToast(`Đã đưa ${ip} vào blacklist (${duration || '15m'})`);
+      await wafApi.addIpRule({ ip: trimmed, rule_type: 'blacklist', reason, duration: duration || '15m' });
+      showToast(`Đã đưa ${trimmed} vào Blacklist (${duration || '15m'})`);
       loadIPRules();
       loadStats();
     } catch (e) {
@@ -207,9 +220,14 @@ export default function App() {
 
   const handleDirectAddWhitelist = async (ip, reason = 'Whitelisted from Dashboard') => {
     if (!ip) return;
+    const trimmed = ip.trim();
+    if (!isValidIPOrCIDR(trimmed)) {
+      showToast(`Địa chỉ IP không hợp lệ: "${trimmed}"`, 'err');
+      return;
+    }
     try {
-      await wafApi.addIpRule({ ip, rule_type: 'whitelist', reason, duration: 'permanent' });
-      showToast(`Đã thêm ${ip} vào Whitelist (Bypass WAF)`);
+      await wafApi.addIpRule({ ip: trimmed, rule_type: 'whitelist', reason, duration: 'permanent' });
+      showToast(`Đã thêm ${trimmed} vào Whitelist (Miễn trừ kiểm tra WAF)`);
       loadIPRules();
       loadStats();
     } catch (e) {
@@ -236,15 +254,20 @@ export default function App() {
   };
 
   const handleSaveIPRule = async () => {
-    if (!newIP.trim()) {
-      showToast('Vui lòng nhập IP', 'err');
+    const trimmedIP = newIP.trim();
+    if (!trimmedIP) {
+      showToast('Vui lòng nhập địa chỉ IP hoặc dải mạng CIDR', 'err');
+      return;
+    }
+    if (!isValidIPOrCIDR(trimmedIP)) {
+      showToast('Định dạng IP/CIDR không hợp lệ! Ví dụ đúng: 192.168.1.1 hoặc 192.168.1.0/24', 'err');
       return;
     }
     try {
       await wafApi.addIpRule({
-        ip: newIP,
+        ip: trimmedIP,
         rule_type: newIPType,
-        reason: newIPReason,
+        reason: newIPReason.trim() || (newIPType === 'blacklist' ? 'Thủ công từ Dashboard' : 'Whitelist tin cậy'),
         duration: newIPType === 'blacklist' ? newIPDuration : 'permanent',
       });
       setShowAddIPModal(false);
@@ -253,7 +276,11 @@ export default function App() {
       setNewIPDuration('15m');
       loadIPRules();
       loadStats();
-      showToast('Đã lưu quy tắc IP và đồng bộ tới HAProxy/Coraza');
+      showToast(
+        newIPType === 'blacklist'
+          ? `Đã thêm ${trimmedIP} vào Blacklist (Cấm ${newIPDuration === 'permanent' ? 'vĩnh viễn' : newIPDuration})`
+          : `Đã thêm ${trimmedIP} vào Whitelist (Miễn trừ kiểm tra WAF)`
+      );
     } catch (e) {
       showToast(String(e.message || e), 'err');
     }

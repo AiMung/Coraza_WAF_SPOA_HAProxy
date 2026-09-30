@@ -3,6 +3,7 @@ package services
 import (
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,18 @@ import (
 	"time"
 	"waf-backend/database"
 )
+
+func isValidIPOrCIDR(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
+	}
+	if net.ParseIP(s) != nil {
+		return true
+	}
+	_, _, err := net.ParseCIDR(s)
+	return err == nil
+}
 
 var ipSyncMu sync.Mutex
 
@@ -69,7 +82,7 @@ func SyncIPRulesToFile() error {
 		var ip string
 		if err := blackRows.Scan(&ip); err == nil {
 			ip = strings.TrimSpace(ip)
-			if ip != "" {
+			if ip != "" && isValidIPOrCIDR(ip) {
 				blackIPs = append(blackIPs, ip)
 			}
 		}
@@ -87,7 +100,7 @@ func SyncIPRulesToFile() error {
 		var ip string
 		if err := whiteRows.Scan(&ip); err == nil {
 			ip = strings.TrimSpace(ip)
-			if ip != "" {
+			if ip != "" && isValidIPOrCIDR(ip) {
 				whiteIPs = append(whiteIPs, ip)
 			}
 		}
