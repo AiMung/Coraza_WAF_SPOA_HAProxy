@@ -413,15 +413,23 @@ else
   fail "Get Bot Defense config returned HTTP $HTTP_CODE"
 fi
 
-# Save Bot Defense Config
+# Save Bot Defense Config (with custom target scope)
 RESP=$(curl -s -w "\n%{http_code}" -X POST "$API_BASE/bot-defense" \
   -H "Content-Type: application/json" \
-  -d '{"cc_enabled":true,"cc_threshold":60,"cc_action":"challenge","challenge_mode":"autonomous_js","block_scanners":true,"pass_ttl_minutes":120}' 2>/dev/null)
+  -d '{"cc_enabled":true,"cc_threshold":60,"cc_action":"challenge","challenge_mode":"autonomous_js","block_scanners":true,"pass_ttl_minutes":120,"target_scope":"custom","target_site_ids":[1]}' 2>/dev/null)
 HTTP_CODE=$(echo "$RESP" | tail -n1)
 if [ "$HTTP_CODE" = "200" ]; then
-  pass "Save Bot Defense config returns 200"
+  pass "Save Bot Defense config with granular scope returns 200"
 else
   fail "Save Bot Defense config returned HTTP $HTTP_CODE"
+fi
+
+# Verify saved scope
+RESP=$(curl -s "$API_BASE/bot-defense" 2>/dev/null)
+if echo "$RESP" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get('target_scope') == 'custom'; assert 1 in d.get('target_site_ids', []); print(f'  Scope: {d[\"target_scope\"]}, Sites: {d[\"target_site_ids\"]}')" 2>/dev/null; then
+  pass "Granular Target Scope persisted correctly"
+else
+  fail "Target scope persistence failed"
 fi
 
 # Test Challenge Verification endpoint

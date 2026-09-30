@@ -77,6 +77,25 @@ frontend default
     # CC Defense & HTTP Flood Stick-Table
     # ========================================
     stick-table type ip size 100k expire 10s store http_req_rate(10s)
+{{- if and (eq .TargetScope "custom") .HasTargetDomains }}
+    # Selective CC Target Domains
+{{- range .TargetDomains }}
+    acl is_cc_target_site hdr_beg(host) -i {{ . }}
+{{- end }}
+    http-request track-sc0 src if is_cc_target_site !is_whitelisted
+    acl is_cc_flooding sc0_http_req_rate gt {{ .CCThreshold }}
+    acl has_waf_clearance req.cook(waf_clearance) -m found
+
+{{- if eq .CCAction "block_429" }}
+    http-request deny deny_status 429 hdr "X-Blocked-By" "aaWAF-CC-Shield" if is_cc_flooding is_cc_target_site !is_whitelisted !has_waf_clearance !is_waf_challenge
+{{- else if eq .CCAction "auto_ban" }}
+    http-request deny deny_status 403 hdr "X-Blocked-By" "aaWAF-CC-Shield-AutoBan" if is_cc_flooding is_cc_target_site !is_whitelisted !has_waf_clearance !is_waf_challenge
+{{- else }}
+    # Challenge Mode (Redirect to /waf-challenge)
+    http-request redirect code 302 location /waf-challenge?return_url=%[path] if is_cc_flooding is_cc_target_site !is_whitelisted !has_waf_clearance !is_waf_challenge
+{{- end }}
+{{- else }}
+    # Global CC Protection (All Sites)
     http-request track-sc0 src if !is_whitelisted
     acl is_cc_flooding sc0_http_req_rate gt {{ .CCThreshold }}
     acl has_waf_clearance req.cook(waf_clearance) -m found
@@ -88,6 +107,7 @@ frontend default
 {{- else }}
     # Default Action: Challenge Mode (Redirect to /waf-challenge)
     http-request redirect code 302 location /waf-challenge?return_url=%[path] if is_cc_flooding !is_whitelisted !has_waf_clearance !is_waf_challenge
+{{- end }}
 {{- end }}
 {{- end }}
 
@@ -191,6 +211,9 @@ type templateData struct {
 	CCThreshold       int
 	CCAction          string
 	BlockScanners     bool
+	TargetScope       string
+	TargetDomains     []string
+	HasTargetDomains  bool
 }
 
 // SyncSitesToHAProxy reads all active protected sites and bot defense settings from the database,
@@ -245,11 +268,13 @@ func SyncSitesToHAProxy() error {
 	}
 
 	// 2. Query Bot Defense settings
-	var ccEnabledStr, ccThresholdStr, ccActionStr, blockScannersStr string
+	var ccEnabledStr, ccThresholdStr, ccActionStr, blockScannersStr, targetScopeStr, targetSiteIDsStr string
 	_ = database.DB.QueryRow("SELECT value FROM settings WHERE key = 'bot_cc_enabled'").Scan(&ccEnabledStr)
 	_ = database.DB.QueryRow("SELECT value FROM settings WHERE key = 'bot_cc_threshold'").Scan(&ccThresholdStr)
 	_ = database.DB.QueryRow("SELECT value FROM settings WHERE key = 'bot_cc_action'").Scan(&ccActionStr)
 	_ = database.DB.QueryRow("SELECT value FROM settings WHERE key = 'bot_block_scanners'").Scan(&blockScannersStr)
+	_ = database.DB.QueryRow("SELECT value FROM settings WHERE key = 'bot_target_scope'").Scan(&targetScopeStr)
+	_ = database.DB.QueryRow("SELECT value FROM settings WHERE key = 'bot_target_site_ids'").Scan(&targetSiteIDsStr)
 
 	ccThreshold := 50
 	if val, scanErr := strconv.Atoi(ccThresholdStr); scanErr == nil && val > 0 {
@@ -261,6 +286,25 @@ func SyncSitesToHAProxy() error {
 	}
 	ccEnabled := (ccEnabledStr != "false")
 	blockScanners := (blockScannersStr != "false")
+	targetScope := "all"
+	if targetScopeStr != "" {
+		targetScope = targetScopeStr
+	}
+
+	var targetDomains []string
+	if targetScope == "custom" && targetSiteIDsStr != "" {
+		idList := strings.Split(targetSiteIDsStr, ",")
+		for _, idStr := range idList {
+			if id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64); err == nil && id > 0 {
+				for _, s := range sites {
+					if s.ID == id {
+						targetDomains = append(targetDomains, s.Domain)
+						break
+					}
+				}
+			}
+		}
+	}
 
 	// 3. Prepare template data
 	data := templateData{
@@ -273,6 +317,9 @@ func SyncSitesToHAProxy() error {
 		CCThreshold:       ccThreshold,
 		CCAction:          ccAction,
 		BlockScanners:     blockScanners,
+		TargetScope:       targetScope,
+		TargetDomains:     targetDomains,
+		HasTargetDomains:  len(targetDomains) > 0,
 	}
 
 	// 3. Parse and execute the HAProxy config template

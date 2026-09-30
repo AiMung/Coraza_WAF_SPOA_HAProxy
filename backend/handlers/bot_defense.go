@@ -22,14 +22,16 @@ import (
 var challengeSecret = []byte("aaWAF-Enterprise-Challenge-Secret-Key-2026")
 
 type BotDefenseConfig struct {
-	CCEnabled           bool   `json:"cc_enabled"`
-	CCThreshold         int    `json:"cc_threshold"`          // Max requests per 10 seconds (e.g. 50)
-	CCAction            string `json:"cc_action"`             // "challenge", "block_429", "auto_ban"
-	ChallengeMode       string `json:"challenge_mode"`        // "autonomous_js", "turnstile"
-	TurnstileSiteKey    string `json:"turnstile_site_key"`
-	TurnstileSecretKey  string `json:"turnstile_secret_key"`
-	BlockScanners       bool   `json:"block_scanners"`
-	PassTTLMinutes      int    `json:"pass_ttl_minutes"`      // Clearance cookie TTL (default 120 mins)
+	CCEnabled          bool    `json:"cc_enabled"`
+	CCThreshold        int     `json:"cc_threshold"`          // Max requests per 10 seconds (e.g. 50)
+	CCAction           string  `json:"cc_action"`             // "challenge", "block_429", "auto_ban"
+	ChallengeMode      string  `json:"challenge_mode"`        // "autonomous_js", "turnstile"
+	TurnstileSiteKey   string  `json:"turnstile_site_key"`
+	TurnstileSecretKey string  `json:"turnstile_secret_key"`
+	BlockScanners      bool    `json:"block_scanners"`
+	PassTTLMinutes     int     `json:"pass_ttl_minutes"`      // Clearance cookie TTL (default 120 mins)
+	TargetScope        string  `json:"target_scope"`          // "all" (Global) or "custom" (Selected sites only)
+	TargetSiteIDs      []int64 `json:"target_site_ids"`       // Specific site IDs when TargetScope == "custom"
 }
 
 func GetBotDefenseConfigFromDB() BotDefenseConfig {
@@ -42,6 +44,8 @@ func GetBotDefenseConfigFromDB() BotDefenseConfig {
 		TurnstileSecretKey: "",
 		BlockScanners:      true,
 		PassTTLMinutes:     120,
+		TargetScope:        "all",
+		TargetSiteIDs:      []int64{},
 	}
 
 	if database.DB == nil {
@@ -81,6 +85,19 @@ func GetBotDefenseConfigFromDB() BotDefenseConfig {
 			case "bot_pass_ttl_minutes":
 				if val, err := strconv.Atoi(v); err == nil && val > 0 {
 					cfg.PassTTLMinutes = val
+				}
+			case "bot_target_scope":
+				if v != "" {
+					cfg.TargetScope = v
+				}
+			case "bot_target_site_ids":
+				if v != "" {
+					parts := strings.Split(v, ",")
+					for _, p := range parts {
+						if id, err := strconv.ParseInt(strings.TrimSpace(p), 10, 64); err == nil && id > 0 {
+							cfg.TargetSiteIDs = append(cfg.TargetSiteIDs, id)
+						}
+					}
 				}
 			}
 		}
@@ -133,6 +150,14 @@ func SaveBotDefense(c *gin.Context) {
 	}
 	defer stmt.Close()
 
+	if payload.TargetScope == "" {
+		payload.TargetScope = "all"
+	}
+	var siteIDsStr []string
+	for _, id := range payload.TargetSiteIDs {
+		siteIDsStr = append(siteIDsStr, strconv.FormatInt(id, 10))
+	}
+
 	settingsMap := map[string]string{
 		"bot_cc_enabled":           strconv.FormatBool(payload.CCEnabled),
 		"bot_cc_threshold":         strconv.Itoa(payload.CCThreshold),
@@ -142,6 +167,8 @@ func SaveBotDefense(c *gin.Context) {
 		"bot_turnstile_secret_key": payload.TurnstileSecretKey,
 		"bot_block_scanners":       strconv.FormatBool(payload.BlockScanners),
 		"bot_pass_ttl_minutes":     strconv.Itoa(payload.PassTTLMinutes),
+		"bot_target_scope":         payload.TargetScope,
+		"bot_target_site_ids":      strings.Join(siteIDsStr, ","),
 	}
 
 	for k, v := range settingsMap {
