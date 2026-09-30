@@ -2,9 +2,8 @@
 *.log
 *.sqlite
 *.db
-bin/
-dist/
-frontend/dist/
+/dist/
+!frontend/dist/
 node_modules/
 frontend/node_modules/
 data/
