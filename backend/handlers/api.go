@@ -24,6 +24,7 @@ type AaWafOverviewResponse struct {
 	AttacksToday           int64                 `json:"attacks_today"`
 	TotalRequests          int64                 `json:"total_requests"`
 	TotalAttacks           int64                 `json:"total_attacks"`
+	AllTimeAttacks         int64                 `json:"all_time_attacks"`
 	BlockedIPs             int64                 `json:"blocked_ips"`
 	WhitelistedIPs         int64                 `json:"whitelisted_ips"`
 	AttackTypes            map[string]int64      `json:"attack_types"`
@@ -404,7 +405,8 @@ func GetStats(c *gin.Context) {
 		MaliciousRequestsToday: attacksToday,
 		AttacksToday:           attacksToday,
 		TotalRequests:          totalRequests,
-		TotalAttacks:           totalAttacks,
+		TotalAttacks:           allTimeAttacks,
+		AllTimeAttacks:         allTimeAttacks,
 		BlockedIPs:             blockedIPs,
 		WhitelistedIPs:         whitelistedIPs,
 		AttackTypes:            attackTypes,

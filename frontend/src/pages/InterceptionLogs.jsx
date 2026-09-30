@@ -136,6 +136,7 @@ const getSeverity = (attackType = '', ruleId = '') => {
 export default function InterceptionLogs({
   logs = [],
   stats = {},
+  totalLogsCount = 0,
   onFilter,
   onRefresh,
   onAddBlacklist,
@@ -808,7 +809,7 @@ export default function InterceptionLogs({
 
       {/* 2. TOP METRICS STRIP (4 Enterprise KPI Summary Cards) */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '14px', marginBottom: '14px' }}>
-        {/* Card 1: Tổng Sự Cố Chặn */}
+        {/* Card 1: Tổng Sự Cố Chặn (Toàn Thời Gian) */}
         <div
           style={{
             background: '#ffffff',
@@ -827,12 +828,12 @@ export default function InterceptionLogs({
               Tổng Sự Cố Chặn
             </div>
             <div style={{ fontSize: '24px', fontWeight: 800, color: '#0f172a', marginTop: '4px', letterSpacing: '-0.5px' }}>
-              {stats.total_attacks || filteredLogs.length}{' '}
+              {totalLogsCount || stats.all_time_attacks || stats.total_attacks || (Array.isArray(logs) ? logs.length : 0)}{' '}
               <span style={{ fontSize: '13px', color: '#64748b', fontWeight: 500 }}>lần</span>
             </div>
             <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
               <i className="fa-solid fa-shield-halved" style={{ fontSize: '10px', color: '#dc2626' }}></i>
-              <span>Quy tắc CRS phát hiện & ngăn chặn</span>
+              <span>Tích lũy từ file log & cơ sở dữ liệu</span>
             </div>
           </div>
           <span
@@ -846,7 +847,7 @@ export default function InterceptionLogs({
               border: '1px solid #fecaca',
             }}
           >
-            403 Deny
+            All-Time Sum
           </span>
         </div>
 

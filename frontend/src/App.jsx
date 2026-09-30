@@ -51,6 +51,7 @@ export default function App() {
   const [range, setRange] = useState('30days');
   const [category, setCategory] = useState('ip_rank');
   const [toast, setToast] = useState(null);
+  const [totalLogsCount, setTotalLogsCount] = useState(0);
 
   const [showAddIPModal, setShowAddIPModal] = useState(false);
   const [newIP, setNewIP] = useState('');
@@ -80,8 +81,11 @@ export default function App() {
 
   const loadLogs = useCallback(async (ip = '', type = '', q = '') => {
     try {
-      const data = await wafApi.logs({ limit: 200, ip, type, q });
+      const data = await wafApi.logs({ limit: 500, ip, type, q });
       setLogs(data.data || []);
+      if (data && typeof data.total_count === 'number') {
+        setTotalLogsCount(data.total_count);
+      }
     } catch (e) {
       console.error('Failed to load logs:', e);
     }
@@ -373,6 +377,7 @@ const isValidIPOrCIDR = (val) => {
             <InterceptionLogs
               logs={logs}
               stats={stats}
+              totalLogsCount={totalLogsCount}
               onFilter={loadLogs}
               onRefresh={() => loadLogs()}
               onAddBlacklist={handleDirectAddBlacklist}

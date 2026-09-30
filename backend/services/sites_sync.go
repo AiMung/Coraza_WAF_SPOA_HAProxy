@@ -287,3 +287,10 @@ func reloadHAProxy() error {
 	log.Printf("[HAProxy Reload] Notice: Reload signal could not be sent directly from this process. Config is saved and will be active on next restart.")
 	return nil
 }
+
+// reloadWAFEngines reloads both Tier 1 (HAProxy) and Tier 2 (Coraza SPOA) concurrently
+func reloadWAFEngines() {
+	_ = reloadHAProxy()
+	reloadCorazaSPOA()
+}
+

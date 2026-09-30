@@ -186,7 +186,7 @@ SecRule REMOTE_ADDR "@ipMatchFromFile /etc/coraza-spoa/rules/blacklist.ips" \
 	}
 
 	log.Printf("[IP Sync] Synchronized %d Blacklist and %d Whitelist IPs to HAProxy/Coraza rules.", len(blackIPs), len(whiteIPs))
-	_ = reloadHAProxy()
+	reloadWAFEngines()
 	return nil
 }
 
