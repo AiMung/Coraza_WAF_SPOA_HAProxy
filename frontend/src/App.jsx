@@ -363,6 +363,8 @@ export default function App() {
               onOpenAddModal={() => setShowAddIPModal(true)}
               onDeleteRule={handleDeleteIPRule}
               onQuickExtend={handleQuickExtendIP}
+              onAddBlacklist={handleDirectAddBlacklist}
+              onAddWhitelist={handleDirectAddWhitelist}
             />
           )}
 

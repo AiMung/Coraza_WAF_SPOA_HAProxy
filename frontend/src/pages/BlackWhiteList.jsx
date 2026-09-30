@@ -1,11 +1,23 @@
 import React, { useState, useEffect, useMemo } from 'react';
 
-export default function BlackWhiteList({ ipRules = [], onOpenAddModal, onDeleteRule, onQuickExtend }) {
+export default function BlackWhiteList({
+  ipRules = [],
+  onOpenAddModal,
+  onDeleteRule,
+  onQuickExtend,
+  onAddBlacklist,
+  onAddWhitelist,
+}) {
   const [activeSubTab, setActiveSubTab] = useState('blacklist'); // 'blacklist' | 'whitelist'
   const [searchTerm, setSearchTerm] = useState('');
   const [filterDuration, setFilterDuration] = useState('all'); // 'all' | 'temporary' | 'permanent'
   const [copiedIP, setCopiedIP] = useState(null);
   const [now, setNow] = useState(Date.now());
+  const [showArchGuide, setShowArchGuide] = useState(false);
+
+  // Live IP Access Diagnostic Inspector
+  const [inspectorIP, setInspectorIP] = useState('');
+  const [inspectorResult, setInspectorResult] = useState(null);
 
   // Real-time tick every second for live countdown
   useEffect(() => {
@@ -71,6 +83,70 @@ export default function BlackWhiteList({ ipRules = [], onOpenAddModal, onDeleteR
     link.download = `waf_${activeSubTab}_ips.txt`;
     link.click();
     URL.revokeObjectURL(url);
+  };
+
+  const handleInspectIP = (e) => {
+    if (e) e.preventDefault();
+    const target = inspectorIP.trim();
+    if (!target) return;
+
+    // 1. Check in whitelist
+    const foundWhite = rulesList.find((r) => r.rule_type === 'whitelist' && r.ip.trim() === target);
+    if (foundWhite) {
+      setInspectorResult({
+        ip: target,
+        verdict: 'whitelist',
+        title: 'Miễn Trừ Kiểm Tra (Whitelist Bypass)',
+        badge: '🟢 ĐƯỢC PHÉP TRUY CẬP',
+        badgeColor: '#15803d',
+        badgeBg: '#dcfce7',
+        message: 'IP này nằm trong Whitelist tin cậy. HAProxy sẽ cho phép đi thẳng vào Web Application, BỎ QUA TOÀN BỘ việc phân tích mã độc của Coraza WAF.',
+        rule: foundWhite,
+      });
+      return;
+    }
+
+    // 2. Check in blacklist
+    const foundBlack = rulesList.find((r) => r.rule_type === 'blacklist' && r.ip.trim() === target);
+    if (foundBlack) {
+      const isExpired = foundBlack.expires_at && new Date(foundBlack.expires_at).getTime() <= now;
+      if (isExpired) {
+        setInspectorResult({
+          ip: target,
+          verdict: 'expired',
+          title: 'Hết Hạn Cấm (Đang Tự Động Gỡ)',
+          badge: '🟡 HẾT HẠN',
+          badgeColor: '#b45309',
+          badgeBg: '#fef3c7',
+          message: 'Thời hạn cấm của IP này đã kết thúc. Daemon nền đang tự động gỡ bỏ khỏi HAProxy.',
+          rule: foundBlack,
+        });
+      } else {
+        setInspectorResult({
+          ip: target,
+          verdict: 'blacklist',
+          title: 'Bị Chặn Đứng Tức Thì (Fast-Path 403 Forbidden)',
+          badge: '🔴 BỊ CHẶN (403)',
+          badgeColor: '#b91c1c',
+          badgeBg: '#fee2e2',
+          message: 'IP này nằm trong Blacklist. HAProxy sẽ từ chối kết nối ngay tại tầng L4/L7 với HTTP 403 (X-Blocked-By: HAProxy-IP-Blacklist) mà KHÔNG tốn tài nguyên gọi WAF.',
+          rule: foundBlack,
+        });
+      }
+      return;
+    }
+
+    // 3. Clean / Standard WAF Inspection
+    setInspectorResult({
+      ip: target,
+      verdict: 'standard',
+      title: 'Lưu Lượng Tiêu Chuẩn (Standard WAF Deep Inspection)',
+      badge: '🔵 PHÂN TÍCH L7 CORAZA',
+      badgeColor: '#0369a1',
+      badgeBg: '#e0f2fe',
+      message: 'IP này không nằm trong danh sách cấm hoặc miễn trừ. Mọi yêu cầu HTTP sẽ được HAProxy gửi qua Coraza SPOA WAF để kiểm tra sâu L7 (OWASP CRS v4.9).',
+      rule: null,
+    });
   };
 
   const formatCountdown = (expiresAt, ruleType) => {
@@ -244,6 +320,28 @@ export default function BlackWhiteList({ ipRules = [], onOpenAddModal, onDeleteR
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <button
               type="button"
+              onClick={() => setShowArchGuide(!showArchGuide)}
+              title="Xem quy chuẩn kiến trúc phòng thủ 2 tầng"
+              style={{
+                fontSize: '12px',
+                padding: '6px 12px',
+                borderRadius: '6px',
+                border: '1px solid #cbd5e1',
+                background: showArchGuide ? '#f1f5f9' : '#ffffff',
+                color: '#334155',
+                cursor: 'pointer',
+                fontWeight: 600,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+              }}
+            >
+              <i className="fa-solid fa-layer-group" style={{ color: '#0284c7' }}></i>
+              Kiến Trúc 2 Tầng
+            </button>
+
+            <button
+              type="button"
               onClick={handleExportList}
               title="Xuất danh sách IP ra file text"
               style={{
@@ -282,6 +380,273 @@ export default function BlackWhiteList({ ipRules = [], onOpenAddModal, onDeleteR
               <i className="fa-solid fa-plus"></i> Thêm IP
             </button>
           </div>
+        </div>
+
+        {/* Two-Tier Defense Architecture Guide Banner (Collapsible) */}
+        {showArchGuide && (
+          <div
+            style={{
+              background: '#f8fafc',
+              border: '1px solid #cbd5e1',
+              borderRadius: '8px',
+              padding: '14px 18px',
+              marginBottom: '16px',
+              fontSize: '12.5px',
+              color: '#334155',
+              lineHeight: 1.6,
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
+              <div style={{ fontWeight: 800, color: '#0f172a', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <i className="fa-solid fa-network-wired" style={{ color: '#2563eb' }}></i>
+                <span>Quy Chuẩn Kiến Trúc Phòng Thủ 2 Tầng (HAProxy Fast-Path & Coraza SPOA WAF)</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowArchGuide(false)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8' }}
+              >
+                <i className="fa-solid fa-xmark"></i>
+              </button>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '12px', marginTop: '10px' }}>
+              <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '10px 12px' }}>
+                <strong style={{ color: '#dc2626', display: 'block', marginBottom: '4px' }}>
+                  <i className="fa-solid fa-bolt"></i> Tầng 1: HAProxy Fast-Path Enforcement
+                </strong>
+                Kiểm tra danh sách IP ngay tại thời điểm bắt tay TCP (Layer 4/7). Nếu thuộc <strong>Blacklist</strong>, HAProxy ngắt kết nối với mã <code>403 Forbidden</code> tức thì, bảo vệ máy chủ không bị cạn kiệt tài nguyên SPOE.
+              </div>
+              <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '10px 12px' }}>
+                <strong style={{ color: '#16a34a', display: 'block', marginBottom: '4px' }}>
+                  <i className="fa-solid fa-shield-check"></i> Whitelist Bypass Acceleration
+                </strong>
+                Nếu IP thuộc <strong>Whitelist</strong>, HAProxy sẽ cho phép chuyển tiếp thẳng tới máy chủ web gốc và <strong>bỏ qua toàn bộ kiểm tra WAF</strong>, giúp các luồng API nội bộ hay hệ thống đối tác đạt độ trễ tối thiểu.
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Live IP Access Diagnostic Inspector Card */}
+        <div
+          style={{
+            background: '#f8fafc',
+            border: '1px solid #e2e8f0',
+            borderRadius: '8px',
+            padding: '12px 16px',
+            marginBottom: '16px',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px', flexWrap: 'wrap', gap: '8px' }}>
+            <span style={{ fontSize: '12px', fontWeight: 700, color: '#334155', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <i className="fa-solid fa-stethoscope" style={{ color: '#2563eb' }}></i>
+              <span>Chẩn Đoán Quyền Truy Cập IP Thời Gian Thực (Live IP Access Inspector)</span>
+            </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: '#64748b' }}>
+              <span>Thử nhanh:</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setInspectorIP('127.0.0.1');
+                  setTimeout(() => handleInspectIP(), 50);
+                }}
+                style={{ background: '#e2e8f0', border: 'none', borderRadius: '4px', padding: '2px 6px', cursor: 'pointer', fontSize: '11px' }}
+              >
+                127.0.0.1
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setInspectorIP('192.168.246.1');
+                  setTimeout(() => handleInspectIP(), 50);
+                }}
+                style={{ background: '#e2e8f0', border: 'none', borderRadius: '4px', padding: '2px 6px', cursor: 'pointer', fontSize: '11px' }}
+              >
+                192.168.246.1
+              </button>
+            </div>
+          </div>
+
+          <form onSubmit={handleInspectIP} style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <input
+              type="text"
+              className="form-ctrl"
+              placeholder="Nhập địa chỉ IP cần kiểm tra quyền (e.g. 192.168.1.100, 10.0.0.5)..."
+              value={inspectorIP}
+              onChange={(e) => {
+                setInspectorIP(e.target.value);
+                if (!e.target.value) setInspectorResult(null);
+              }}
+              style={{ flex: 1, fontSize: '12px', padding: '7px 12px' }}
+            />
+            <button
+              type="submit"
+              style={{
+                fontSize: '12px',
+                padding: '7px 14px',
+                borderRadius: '6px',
+                border: 'none',
+                background: '#0284c7',
+                color: '#fff',
+                cursor: 'pointer',
+                fontWeight: 600,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              <i className="fa-solid fa-magnifying-glass"></i> Kiểm Tra Quyền
+            </button>
+            {inspectorResult && (
+              <button
+                type="button"
+                onClick={() => {
+                  setInspectorIP('');
+                  setInspectorResult(null);
+                }}
+                style={{
+                  fontSize: '12px',
+                  padding: '7px 10px',
+                  borderRadius: '6px',
+                  border: '1px solid #cbd5e1',
+                  background: '#ffffff',
+                  color: '#64748b',
+                  cursor: 'pointer',
+                }}
+                title="Xóa kết quả"
+              >
+                <i className="fa-solid fa-xmark"></i>
+              </button>
+            )}
+          </form>
+
+          {/* Diagnostic Result Banner */}
+          {inspectorResult && (
+            <div
+              style={{
+                marginTop: '10px',
+                background: '#ffffff',
+                border: `1px solid ${
+                  inspectorResult.verdict === 'blacklist'
+                    ? '#fecaca'
+                    : inspectorResult.verdict === 'whitelist'
+                    ? '#bbf7d0'
+                    : '#bae6fd'
+                }`,
+                borderRadius: '6px',
+                padding: '10px 14px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                flexWrap: 'wrap',
+                gap: '10px',
+                animation: 'fadeInPanel 0.2s ease',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1 }}>
+                <span
+                  style={{
+                    fontSize: '11px',
+                    fontWeight: 800,
+                    padding: '3px 9px',
+                    borderRadius: '12px',
+                    background: inspectorResult.badgeBg,
+                    color: inspectorResult.badgeColor,
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {inspectorResult.badge}
+                </span>
+                <div>
+                  <div style={{ fontSize: '12.5px', fontWeight: 700, color: '#0f172a' }}>
+                    {inspectorResult.ip} — {inspectorResult.title}
+                  </div>
+                  <div style={{ fontSize: '11.5px', color: '#64748b', marginTop: '2px' }}>
+                    {inspectorResult.message}
+                  </div>
+                  {inspectorResult.rule?.reason && (
+                    <div style={{ fontSize: '11px', color: '#475569', marginTop: '2px', fontStyle: 'italic' }}>
+                      Lý do lưu: {inspectorResult.rule.reason}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Fast Action Buttons */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                {inspectorResult.verdict === 'standard' && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (onAddBlacklist) {
+                          onAddBlacklist(inspectorResult.ip, 'Chặn từ công cụ kiểm tra', '15m');
+                          setTimeout(() => handleInspectIP(), 200);
+                        }
+                      }}
+                      style={{
+                        fontSize: '11px',
+                        padding: '4px 10px',
+                        borderRadius: '4px',
+                        border: 'none',
+                        background: '#dc2626',
+                        color: '#fff',
+                        cursor: 'pointer',
+                        fontWeight: 600,
+                      }}
+                    >
+                      <i className="fa-solid fa-ban"></i> Chặn 15m
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (onAddWhitelist) {
+                          onAddWhitelist(inspectorResult.ip, 'Thêm từ công cụ kiểm tra');
+                          setTimeout(() => handleInspectIP(), 200);
+                        }
+                      }}
+                      style={{
+                        fontSize: '11px',
+                        padding: '4px 10px',
+                        borderRadius: '4px',
+                        border: 'none',
+                        background: '#16a34a',
+                        color: '#fff',
+                        cursor: 'pointer',
+                        fontWeight: 600,
+                      }}
+                    >
+                      <i className="fa-solid fa-circle-check"></i> Whitelist
+                    </button>
+                  </>
+                )}
+
+                {inspectorResult.rule && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (onDeleteRule) {
+                        onDeleteRule(inspectorResult.rule.id);
+                        setTimeout(() => handleInspectIP(), 200);
+                      }
+                    }}
+                    style={{
+                      fontSize: '11px',
+                      padding: '4px 10px',
+                      borderRadius: '4px',
+                      border: '1px solid #cbd5e1',
+                      background: '#ffffff',
+                      color: '#dc2626',
+                      cursor: 'pointer',
+                      fontWeight: 600,
+                    }}
+                  >
+                    <i className="fa-solid fa-trash-can"></i> Gỡ Quy Tắc Này
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* 3. Modern 2-Tab Navigation */}
