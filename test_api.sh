@@ -275,8 +275,10 @@ fi
 
 echo ""
 
-# ─── Test 9: Telegram Config ─────────────────────────────────
-echo "━━━ Test 9: Telegram Config ━━━"
+# ─── Test 9: Telegram Config & Test Route ──────────────────────
+echo "━━━ Test 9: Telegram Config & Test Route ━━━"
+
+ORIG_TG=$(curl -s "$API_BASE/telegram" 2>/dev/null)
 
 RESP=$(curl -s -w "\n%{http_code}" "$API_BASE/telegram" 2>/dev/null)
 HTTP_CODE=$(echo "$RESP" | tail -n1)
@@ -309,6 +311,21 @@ print(f'  Token: {d[\"bot_token\"][:20]}..., ChatID: {d[\"chat_id\"]}')
   pass "Telegram config persisted correctly"
 else
   fail "Telegram config not persisted"
+fi
+
+# Verify POST /api/telegram/test endpoint is mounted and responds
+RESP=$(curl -s -w "\n%{http_code}" -X POST "$API_BASE/telegram/test" 2>/dev/null)
+HTTP_CODE=$(echo "$RESP" | tail -n1)
+if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "400" ]; then
+  pass "Telegram test route is reachable (HTTP $HTTP_CODE)"
+else
+  fail "Telegram test route returned HTTP $HTTP_CODE"
+fi
+
+# Restore user original Telegram config if present
+if echo "$ORIG_TG" | grep -q '"bot_token"' && ! echo "$ORIG_TG" | grep -q '"test_token_123"'; then
+  curl -s -X POST "$API_BASE/telegram" -H "Content-Type: application/json" -d "$ORIG_TG" > /dev/null 2>&1
+  echo "  (Restored user's original Telegram configuration)"
 fi
 
 echo ""
@@ -385,7 +402,48 @@ else
   fail "Test WAF probe returned HTTP $HTTP_CODE"
 fi
 
+# ─── Test 12: Bot Defense & Browser Challenge Verification ───
+echo "━━━ Test 12: Bot Defense & Browser Challenge Verification ━━━"
+
+RESP=$(curl -s -w "\n%{http_code}" "$API_BASE/bot-defense" 2>/dev/null)
+HTTP_CODE=$(echo "$RESP" | tail -n1)
+if [ "$HTTP_CODE" = "200" ]; then
+  pass "Get Bot Defense config returns 200"
+else
+  fail "Get Bot Defense config returned HTTP $HTTP_CODE"
+fi
+
+# Save Bot Defense Config
+RESP=$(curl -s -w "\n%{http_code}" -X POST "$API_BASE/bot-defense" \
+  -H "Content-Type: application/json" \
+  -d '{"cc_enabled":true,"cc_threshold":60,"cc_action":"challenge","challenge_mode":"autonomous_js","block_scanners":true,"pass_ttl_minutes":120}' 2>/dev/null)
+HTTP_CODE=$(echo "$RESP" | tail -n1)
+if [ "$HTTP_CODE" = "200" ]; then
+  pass "Save Bot Defense config returns 200"
+else
+  fail "Save Bot Defense config returned HTTP $HTTP_CODE"
+fi
+
+# Test Challenge Verification endpoint
+RESP=$(curl -s -w "\n%{http_code}" -X POST "$API_BASE/challenge/verify" \
+  -H "Content-Type: application/json" \
+  -d '{"mode":"autonomous_js","token":"pow_test_nonce_123456","return_url":"/demo"}' 2>/dev/null)
+HTTP_CODE=$(echo "$RESP" | tail -n1)
+BODY=$(echo "$RESP" | sed '$d')
+
+if [ "$HTTP_CODE" = "200" ]; then
+  pass "Autonomous JS Challenge verification returns 200"
+  if echo "$BODY" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d['success'] == True; assert 'clearance' in d; print(f'  Clearance Token: {d[\"clearance\"][:25]}...')" 2>/dev/null; then
+    pass "Clearance HMAC cookie generated successfully"
+  else
+    fail "Clearance payload invalid"
+  fi
+else
+  fail "Challenge verification returned HTTP $HTTP_CODE"
+fi
+
 echo ""
+
 
 # ─── Summary ──────────────────────────────────────────────────
 echo "╔══════════════════════════════════════════════════════╗"

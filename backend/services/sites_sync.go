@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"text/template"
@@ -56,6 +57,39 @@ frontend default
     acl is_whitelisted src -f /usr/local/etc/haproxy/rules/whitelist.ips
     acl is_blacklisted src -f /usr/local/etc/haproxy/rules/blacklist.ips
     http-request deny deny_status 403 hdr "X-Blocked-By" "HAProxy-IP-Blacklist" if is_blacklisted !is_whitelisted
+
+    # ========================================
+    # Internal Challenge & API Gateway
+    # ========================================
+    acl is_waf_challenge path_beg /waf-challenge /api/challenge
+    use_backend backend_waf_internal if is_waf_challenge
+
+{{- if .BlockScanners }}
+    # ========================================
+    # Scanner & Malicious Bot Defense
+    # ========================================
+    acl is_scanner_agent hdr_sub(user-agent) -i sqlmap nikto acunetix nessus masscan gobuster dirbuster wpscan
+    http-request deny deny_status 403 hdr "X-Blocked-By" "aaWAF-Scanner-Shield" if is_scanner_agent !is_whitelisted
+{{- end }}
+
+{{- if .CCEnabled }}
+    # ========================================
+    # CC Defense & HTTP Flood Stick-Table
+    # ========================================
+    stick-table type ip size 100k expire 10s store http_req_rate(10s)
+    http-request track-sc0 src if !is_whitelisted
+    acl is_cc_flooding sc0_http_req_rate gt {{ .CCThreshold }}
+    acl has_waf_clearance req.cook(waf_clearance) -m found
+
+{{- if eq .CCAction "block_429" }}
+    http-request deny deny_status 429 hdr "X-Blocked-By" "aaWAF-CC-Shield" if is_cc_flooding !is_whitelisted !has_waf_clearance !is_waf_challenge
+{{- else if eq .CCAction "auto_ban" }}
+    http-request deny deny_status 403 hdr "X-Blocked-By" "aaWAF-CC-Shield-AutoBan" if is_cc_flooding !is_whitelisted !has_waf_clearance !is_waf_challenge
+{{- else }}
+    # Default Action: Challenge Mode (Redirect to /waf-challenge)
+    http-request redirect code 302 location /waf-challenge?return_url=%[path] if is_cc_flooding !is_whitelisted !has_waf_clearance !is_waf_challenge
+{{- end }}
+{{- end }}
 
     # ========================================
     # SPOE Coraza WAF Engine Setup
@@ -109,6 +143,12 @@ frontend default
 # ========================================
 # Backend Definitions (Auto-generated)
 # ========================================
+
+# Backend: aaWAF Internal Engine (Challenge & API Gateway)
+backend backend_waf_internal
+    mode http
+    server waf_core waf-backend:8080 check
+
 {{- range .Sites }}
 
 # Backend: {{ .Name }} ({{ .Domain }}) → {{ .UpstreamTarget }}
@@ -146,9 +186,14 @@ type templateData struct {
 	BypassSites       []ProtectedSiteForSync
 	HasDetectionSites bool
 	DetectionSites    []ProtectedSiteForSync
+	// Bot Defense & CC Mitigation
+	CCEnabled         bool
+	CCThreshold       int
+	CCAction          string
+	BlockScanners     bool
 }
 
-// SyncSitesToHAProxy reads all active protected sites from the database,
+// SyncSitesToHAProxy reads all active protected sites and bot defense settings from the database,
 // renders a complete haproxy.cfg using Go templates, writes it to disk,
 // and triggers a graceful HAProxy reload.
 func SyncSitesToHAProxy() error {
@@ -199,13 +244,35 @@ func SyncSitesToHAProxy() error {
 		}
 	}
 
-	// 2. Prepare template data
+	// 2. Query Bot Defense settings
+	var ccEnabledStr, ccThresholdStr, ccActionStr, blockScannersStr string
+	_ = database.DB.QueryRow("SELECT value FROM settings WHERE key = 'bot_cc_enabled'").Scan(&ccEnabledStr)
+	_ = database.DB.QueryRow("SELECT value FROM settings WHERE key = 'bot_cc_threshold'").Scan(&ccThresholdStr)
+	_ = database.DB.QueryRow("SELECT value FROM settings WHERE key = 'bot_cc_action'").Scan(&ccActionStr)
+	_ = database.DB.QueryRow("SELECT value FROM settings WHERE key = 'bot_block_scanners'").Scan(&blockScannersStr)
+
+	ccThreshold := 50
+	if val, scanErr := strconv.Atoi(ccThresholdStr); scanErr == nil && val > 0 {
+		ccThreshold = val
+	}
+	ccAction := "challenge"
+	if ccActionStr != "" {
+		ccAction = ccActionStr
+	}
+	ccEnabled := (ccEnabledStr != "false")
+	blockScanners := (blockScannersStr != "false")
+
+	// 3. Prepare template data
 	data := templateData{
 		Sites:             sites,
 		HasBypassSites:    len(bypassSites) > 0,
 		BypassSites:       bypassSites,
 		HasDetectionSites: len(detectionSites) > 0,
 		DetectionSites:    detectionSites,
+		CCEnabled:         ccEnabled,
+		CCThreshold:       ccThreshold,
+		CCAction:          ccAction,
+		BlockScanners:     blockScanners,
 	}
 
 	// 3. Parse and execute the HAProxy config template

@@ -82,6 +82,10 @@ func main() {
 		api.DELETE("/ip-rules/:id", handlers.DeleteIPRule)
 		api.GET("/telegram", handlers.GetTelegram)
 		api.POST("/telegram", handlers.UpdateTelegram)
+		api.POST("/telegram/test", handlers.TestTelegram)
+		api.GET("/bot-defense", handlers.GetBotDefense)
+		api.POST("/bot-defense", handlers.SaveBotDefense)
+		api.POST("/challenge/verify", handlers.VerifyChallenge)
 		api.GET("/sites", handlers.GetSites)
 		api.POST("/sites", handlers.AddSite)
 		api.PUT("/sites/:id", handlers.UpdateSite)
@@ -96,6 +100,9 @@ func main() {
 		api.POST("/system/fix", handlers.SystemFix)
 		api.POST("/system/reboot", handlers.SystemReboot)
 	}
+
+	// Browser Challenge Page (Cloudflare / aaWAF Challenge)
+	r.GET("/waf-challenge", handlers.ServeChallengePage)
 
 	// WebSocket Live Endpoint
 	r.GET("/ws", func(c *gin.Context) {
