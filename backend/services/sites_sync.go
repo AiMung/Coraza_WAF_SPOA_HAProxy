@@ -64,29 +64,44 @@ frontend default
     filter spoe engine coraza config /usr/local/etc/haproxy/spoe-coraza.conf
 {{- if .HasBypassSites }}
 
-    # Sites with WAF Bypass mode — skip SPOE inspection
+    # Sites with WAF Bypass mode — skip SPOE inspection completely
 {{- range .BypassSites }}
-    acl waf_bypass_site_{{ .ID }} hdr(host) -i {{ .Domain }}
+    acl is_waf_bypass_mode hdr_beg(host) -i {{ .Domain }}
 {{- end }}
-    http-request send-spoe-group coraza coraza-req if !is_whitelisted{{ range .BypassSites }} !waf_bypass_site_{{ .ID }}{{ end }}
+    http-request set-var(txn.is_waf_bypass) bool(1) if is_waf_bypass_mode
+    http-request send-spoe-group coraza coraza-req if !is_whitelisted !is_waf_bypass_mode
 {{- else }}
     http-request send-spoe-group coraza coraza-req if !is_whitelisted
+{{- end }}
+
+{{- if .HasDetectionSites }}
+
+    # Sites with WAF Detection (Monitor Only) mode — inspect & log, but bypass 403 blocking
+{{- range .DetectionSites }}
+    acl is_waf_detection_mode hdr_beg(host) -i {{ .Domain }}
+{{- end }}
+    http-request set-var(txn.is_waf_detection) bool(1) if is_waf_detection_mode
 {{- end }}
 
     # WAF Action Handlers
     http-request redirect code 302 location %[var(txn.coraza.data)] if { var(txn.coraza.action) -m str redirect }
     http-response redirect code 302 location %[var(txn.coraza.data)] if { var(txn.coraza.action) -m str redirect }
-    http-request deny deny_status 403 hdr "X-Blocked-By" "Coraza-WAF-Shield" if { var(txn.coraza.action) -m str deny }
-    http-response deny deny_status 403 hdr "X-Blocked-By" "Coraza-WAF-Shield" if { var(txn.coraza.action) -m str deny }
-    http-request silent-drop if { var(txn.coraza.action) -m str drop }
-    http-response silent-drop if { var(txn.coraza.action) -m str drop }
+{{- if .HasDetectionSites }}
+    # In Detection mode, inject headers for upstream visibility but do NOT block with 403
+    http-request set-header X-WAF-Mode "Detection-Only" if is_waf_detection_mode
+    http-request set-header X-WAF-Threat-Detected "True" if is_waf_detection_mode { var(txn.coraza.action) -m str deny }
+{{- end }}
+    http-request deny deny_status 403 hdr "X-Blocked-By" "Coraza-WAF-Shield" if { var(txn.coraza.action) -m str deny }{{ if .HasDetectionSites }} !is_waf_detection_mode{{ end }}{{ if .HasBypassSites }} !is_waf_bypass_mode{{ end }}
+    http-response deny deny_status 403 hdr "X-Blocked-By" "Coraza-WAF-Shield" if { var(txn.coraza.action) -m str deny }{{ if .HasDetectionSites }} !{ var(txn.is_waf_detection) -m bool }{{ end }}{{ if .HasBypassSites }} !{ var(txn.is_waf_bypass) -m bool }{{ end }}
+    http-request silent-drop if { var(txn.coraza.action) -m str drop }{{ if .HasDetectionSites }} !is_waf_detection_mode{{ end }}{{ if .HasBypassSites }} !is_waf_bypass_mode{{ end }}
+    http-response silent-drop if { var(txn.coraza.action) -m str drop }{{ if .HasDetectionSites }} !{ var(txn.is_waf_detection) -m bool }{{ end }}{{ if .HasBypassSites }} !{ var(txn.is_waf_bypass) -m bool }{{ end }}
 
     # ========================================
     # Virtual Host Routing (Auto-generated)
     # ========================================
 {{- range .Sites }}
     # Site #{{ .ID }}: {{ .Name }} [WAF: {{ .WAFMode }}]
-    acl host_site_{{ .ID }} hdr(host) -i {{ .Domain }}
+    acl host_site_{{ .ID }} hdr_beg(host) -i {{ .Domain }}
     use_backend backend_site_{{ .ID }} if host_site_{{ .ID }}
 {{ end }}
     default_backend protected-app-backend
@@ -126,9 +141,11 @@ listen stats
 
 // templateData holds all data passed to the HAProxy config template
 type templateData struct {
-	Sites          []ProtectedSiteForSync
-	HasBypassSites bool
-	BypassSites    []ProtectedSiteForSync
+	Sites             []ProtectedSiteForSync
+	HasBypassSites    bool
+	BypassSites       []ProtectedSiteForSync
+	HasDetectionSites bool
+	DetectionSites    []ProtectedSiteForSync
 }
 
 // SyncSitesToHAProxy reads all active protected sites from the database,
@@ -156,6 +173,7 @@ func SyncSitesToHAProxy() error {
 
 	var sites []ProtectedSiteForSync
 	var bypassSites []ProtectedSiteForSync
+	var detectionSites []ProtectedSiteForSync
 
 	for rows.Next() {
 		var s ProtectedSiteForSync
@@ -173,17 +191,21 @@ func SyncSitesToHAProxy() error {
 
 		sites = append(sites, s)
 
-		// Collect bypass sites for WAF skip ACL
+		// Collect sites by WAF enforcement mode
 		if s.WAFMode == "bypass" {
 			bypassSites = append(bypassSites, s)
+		} else if s.WAFMode == "detection" {
+			detectionSites = append(detectionSites, s)
 		}
 	}
 
 	// 2. Prepare template data
 	data := templateData{
-		Sites:          sites,
-		HasBypassSites: len(bypassSites) > 0,
-		BypassSites:    bypassSites,
+		Sites:             sites,
+		HasBypassSites:    len(bypassSites) > 0,
+		BypassSites:       bypassSites,
+		HasDetectionSites: len(detectionSites) > 0,
+		DetectionSites:    detectionSites,
 	}
 
 	// 3. Parse and execute the HAProxy config template

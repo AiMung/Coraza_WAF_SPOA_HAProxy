@@ -14,8 +14,8 @@ NC='\033[0m'
 PASS=0
 FAIL=0
 
-pass() { ((PASS++)); echo -e "  ${GREEN}✓ PASS${NC}: $1"; }
-fail() { ((FAIL++)); echo -e "  ${RED}✗ FAIL${NC}: $1"; }
+pass() { ((PASS++)) || true; echo -e "  ${GREEN}✓ PASS${NC}: $1"; }
+fail() { ((FAIL++)) || true; echo -e "  ${RED}✗ FAIL${NC}: $1"; }
 
 echo ""
 echo "╔══════════════════════════════════════════════════════╗"
@@ -337,11 +337,52 @@ if echo "$RESP" | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
 total = d.get('total_count', 0)
-print(f'  Search 'UNION': {total} matches')
+print(f'  Search UNION: {total} matches')
 " 2>/dev/null; then
   pass "Search query filter works"
 else
   fail "Search query filter failed"
+fi
+
+echo ""
+
+# ─── Test 11: Protected Sites & Tri-State WAF Verification ──
+echo "━━━ Test 11: Protected Sites & Tri-State WAF Verification ━━━"
+
+# Get Sites
+RESP=$(curl -s -w "\n%{http_code}" "$API_BASE/sites" 2>/dev/null)
+HTTP_CODE=$(echo "$RESP" | tail -n1)
+BODY=$(echo "$RESP" | sed '$d')
+
+if [ "$HTTP_CODE" = "200" ]; then
+  pass "Get sites returns 200"
+  SITE_COUNT=$(echo "$BODY" | python3 -c "import json,sys; print(len(json.load(sys.stdin)))" 2>/dev/null || echo 0)
+  echo "  Total protected sites: $SITE_COUNT"
+else
+  fail "Get sites returned HTTP $HTTP_CODE"
+fi
+
+# Test WAF Probe on Site 1
+RESP=$(curl -s -w "\n%{http_code}" -X POST "$API_BASE/sites/1/test-waf" 2>/dev/null)
+HTTP_CODE=$(echo "$RESP" | tail -n1)
+BODY=$(echo "$RESP" | sed '$d')
+
+if [ "$HTTP_CODE" = "200" ]; then
+  pass "Test WAF Probe on Site 1 returns 200"
+  if echo "$BODY" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+assert 'verdict' in d, 'Missing verdict'
+assert 'latency_ms' in d, 'Missing latency_ms'
+assert 'status_code' in d, 'Missing status_code'
+print(f'  Probe Verdict: {d[\"verdict\"]}, Status: {d[\"status_code\"]}, Latency: {d[\"latency_ms\"]}ms')
+" 2>/dev/null; then
+    pass "Test WAF probe payload structure is valid"
+  else
+    fail "Test WAF probe payload structure invalid"
+  fi
+else
+  fail "Test WAF probe returned HTTP $HTTP_CODE"
 fi
 
 echo ""

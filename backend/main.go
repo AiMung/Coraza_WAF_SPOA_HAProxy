@@ -88,6 +88,7 @@ func main() {
 		api.DELETE("/sites/:id", handlers.DeleteSite)
 		api.POST("/sites/:id/toggle", handlers.ToggleSiteWAF)
 		api.POST("/sites/:id/ping", handlers.PingSite)
+		api.POST("/sites/:id/test-waf", handlers.TestWAFSite)
 		api.POST("/simulate-attack", handlers.SimulateAttack)
 		api.GET("/settings", handlers.GetSettings)
 		api.POST("/settings", handlers.SaveSettings)

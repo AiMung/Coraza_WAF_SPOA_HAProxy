@@ -10,6 +10,7 @@ import CustomRules from './pages/CustomRules';
 import RecaptchaBot from './pages/RecaptchaBot';
 import TelegramSettings from './pages/TelegramSettings';
 import Settings from './pages/Settings';
+import ErrorBoundary from './components/ErrorBoundary';
 import { wafApi, WS_URL } from './api/client';
 
 
@@ -319,6 +320,7 @@ export default function App() {
         />
 
         <div className="aawaf-content">
+          <ErrorBoundary key={activeTab}>
           {activeTab === 'overview' && (
             <Overview
               stats={stats}
@@ -374,6 +376,7 @@ export default function App() {
             />
           )}
           {activeTab === 'settings' && <Settings />}
+          </ErrorBoundary>
         </div>
       </main>
 

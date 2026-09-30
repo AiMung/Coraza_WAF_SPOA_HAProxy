@@ -12,7 +12,6 @@ import {
   Filler,
 } from 'chart.js';
 import WorldMap from '../components/WorldMap';
-import RangeOverview from '../components/RangeOverview';
 
 ChartJS.register(
   CategoryScale,
@@ -99,34 +98,81 @@ export default function Overview({
     }
   };
 
-  // 1. Request Trends Line Chart
-  const trendHours = (stats.request_trends && stats.request_trends.length > 0)
-    ? stats.request_trends.map(t => t.time)
-    : [];
+  // Localized Time Formatter (Converts UTC to local wall-clock time)
+  const formatLocalTime = (ts, includeDate = false) => {
+    if (!ts) return 'N/A';
+    try {
+      let d;
+      if (ts.endsWith('Z')) {
+        d = new Date(ts);
+      } else if (ts.includes('T')) {
+        d = new Date(ts.endsWith('Z') ? ts : ts + 'Z');
+      } else {
+        const clean = ts.replace(/\//g, '-');
+        d = new Date(clean + 'Z');
+      }
+      if (isNaN(d.getTime())) d = new Date(ts);
+      if (isNaN(d.getTime())) return ts;
 
-  const trendTotals = (stats.request_trends && stats.request_trends.length > 0)
-    ? stats.request_trends.map(t => t.total_requests)
-    : [];
+      const pad = (n) => String(n).padStart(2, '0');
+      const hours = pad(d.getHours());
+      const mins = pad(d.getMinutes());
+      const secs = pad(d.getSeconds());
+
+      if (includeDate) {
+        const day = pad(d.getDate());
+        const month = pad(d.getMonth() + 1);
+        return `${day}/${month} ${hours}:${mins}:${secs}`;
+      }
+      return `${hours}:${mins}:${secs}`;
+    } catch (e) {
+      return ts;
+    }
+  };
+
+  // 1. Request Trends Line Chart (Dual-Line: Total Traffic vs Blocked Attacks)
+  const trendPoints = stats.request_trends || [];
+  const trendLabels = trendPoints.map(t => t.time);
+  const trendTotals = trendPoints.map(t => t.total_requests ?? 0);
+  const trendBlocked = trendPoints.map(t => t.blocked_requests ?? (t.status_499 || 0));
 
   const trendChartData = {
-    labels: trendHours,
+    labels: trendLabels,
     datasets: [
       {
-        label: 'Tổng Request',
+        label: 'Tổng Lưu Lượng',
         data: trendTotals,
         borderColor: '#10b981',
         backgroundColor: (context) => {
           const ctx = context.chart.ctx;
-          const gradient = ctx.createLinearGradient(0, 0, 0, 140);
-          gradient.addColorStop(0, 'rgba(16, 185, 129, 0.28)');
+          const gradient = ctx.createLinearGradient(0, 0, 0, 160);
+          gradient.addColorStop(0, 'rgba(16, 185, 129, 0.22)');
           gradient.addColorStop(1, 'rgba(16, 185, 129, 0.00)');
           return gradient;
         },
         fill: true,
         borderWidth: 2.5,
         tension: 0.35,
-        pointRadius: 3,
+        pointRadius: 3.5,
         pointBackgroundColor: '#10b981',
+        pointHoverRadius: 6,
+      },
+      {
+        label: 'Yêu Cầu Bị Chặn (WAF)',
+        data: trendBlocked,
+        borderColor: '#ef4444',
+        backgroundColor: (context) => {
+          const ctx = context.chart.ctx;
+          const gradient = ctx.createLinearGradient(0, 0, 0, 160);
+          gradient.addColorStop(0, 'rgba(239, 68, 68, 0.16)');
+          gradient.addColorStop(1, 'rgba(239, 68, 68, 0.00)');
+          return gradient;
+        },
+        fill: true,
+        borderWidth: 2,
+        tension: 0.35,
+        pointRadius: 3.5,
+        pointBackgroundColor: '#ef4444',
         pointHoverRadius: 6,
       },
     ],
@@ -138,28 +184,26 @@ export default function Overview({
     plugins: {
       legend: { display: false },
       tooltip: {
-        backgroundColor: '#1e293b',
+        backgroundColor: '#0f172a',
         titleColor: '#f8fafc',
         bodyColor: '#cbd5e1',
-        borderColor: '#334155',
-        borderWidth: 1,
         padding: 10,
-        displayColors: false,
+        cornerRadius: 6,
         callbacks: {
-          label: (context) => ` Lưu lượng: ${context.parsed.y.toLocaleString()} requests`,
+          label: (context) => ` ${context.dataset.label}: ${context.parsed.y.toLocaleString()} requests`,
         },
       },
     },
     scales: {
       x: {
-        grid: { color: 'rgba(226, 232, 240, 0.6)', drawBorder: false },
-        ticks: { color: '#64748b', font: { size: 10, family: 'Inter' } },
+        grid: { display: false },
+        ticks: { color: '#64748b', font: { size: 10.5, family: 'Inter' } },
       },
       y: {
-        grid: { color: 'rgba(226, 232, 240, 0.6)', drawBorder: false },
+        grid: { color: '#f1f5f9' },
         ticks: {
           color: '#64748b',
-          font: { size: 9, family: 'Inter' },
+          font: { size: 9.5, family: 'Inter' },
           callback: (val) => (val >= 1000 ? `${(val / 1000).toFixed(0)}k` : val),
         },
         beginAtZero: true,
@@ -266,84 +310,86 @@ export default function Overview({
 
   return (
     <div className="aawaf-dashboard-page">
-      {/* 0. COMMAND BAR: Quick Attack Simulator & SOC Engine Status */}
-      <div className="soc-command-strip">
-        <div className="engine-status-indicators">
-          <div className="soc-status-badge green">
-            <span className="pulsing-radar-dot"></span>
-            <span>CORAZA SPOA: <strong>ACTIVE</strong></span>
-          </div>
-          <div className="soc-status-badge blue">
-            <i className="fa-solid fa-layer-group"></i>
-            <span>CRS v4.9: <strong>ENABLED</strong></span>
-          </div>
-          <div className="soc-status-badge red">
-            <i className="fa-solid fa-shield-virus"></i>
-            <span>ACTION: <strong>403 BLOCK</strong></span>
-          </div>
+      {/* Time Range Selector Strip */}
+      <div className="time-filter-pills-bar" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px', background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '10px', padding: '8px 14px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span style={{ fontSize: '12px', fontWeight: 700, color: '#475569', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <i className="fa-solid fa-clock-rotate-left" style={{ color: '#2563eb' }}></i> Khoảng thời gian:
+          </span>
+          {[
+            { id: 'today', label: 'Hôm nay', icon: 'fa-bolt' },
+            { id: 'yesterday', label: 'Hôm qua', icon: 'fa-clock-rotate-left' },
+            { id: '7days', label: '7 ngày', icon: 'fa-calendar-week' },
+            { id: '30days', label: '30 ngày', icon: 'fa-chart-area' },
+          ].map(p => (
+            <button
+              key={p.id}
+              type="button"
+              onClick={() => handleTimeChange(p.id)}
+              style={{
+                padding: '5px 12px',
+                borderRadius: '6px',
+                border: timeFilter === p.id ? '1px solid #10b981' : '1px solid #e2e8f0',
+                background: timeFilter === p.id ? '#ecfdf5' : '#ffffff',
+                color: timeFilter === p.id ? '#047857' : '#64748b',
+                fontWeight: timeFilter === p.id ? 700 : 500,
+                fontSize: '11.5px',
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '5px',
+                transition: 'all 0.15s',
+              }}
+            >
+              <i className={`fa-solid ${p.icon}`} style={{ fontSize: '10px' }}></i>
+              {p.label}
+            </button>
+          ))}
         </div>
 
-        <div className="soc-simulation-toolbar">
-          <span className="sim-label"><i className="fa-solid fa-flask"></i> Mô phỏng tấn công:</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '14px', fontSize: '11.5px', color: '#64748b' }}>
+          <span>Tỷ lệ Intercept: <strong style={{ color: '#2563eb' }}>{blockRatio}%</strong></span>
+          <span>IP Blacklist: <strong style={{ color: '#dc2626' }}>{stats.blocked_ips ?? 0}</strong></span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', color: '#16a34a', fontWeight: 600 }}>
+            <span className="pulsing-radar-dot" style={{ width: '6px', height: '6px' }}></span> Live SOC Telemetry
+          </span>
           <button
-            className={`btn-sim-pill red ${simulating === 'sqli' ? 'loading' : ''}`}
-            onClick={() => handleTriggerSimulate('sqli')}
-            disabled={!!simulating}
-            title="Gửi Payload SQL Injection (?id=1' OR 1=1--)"
+            type="button"
+            onClick={onRefresh}
+            title="Làm mới số liệu hệ thống"
+            style={{
+              padding: '4px 8px',
+              borderRadius: '6px',
+              border: '1px solid #e2e8f0',
+              background: '#f8fafc',
+              color: '#475569',
+              cursor: 'pointer',
+              fontSize: '11px',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '4px',
+            }}
           >
-            <i className="fa-solid fa-database"></i> SQLi
-          </button>
-          <button
-            className={`btn-sim-pill orange ${simulating === 'xss' ? 'loading' : ''}`}
-            onClick={() => handleTriggerSimulate('xss')}
-            disabled={!!simulating}
-            title="Gửi Payload XSS (<script>alert(1)</script>)"
-          >
-            <i className="fa-solid fa-code"></i> XSS
-          </button>
-          <button
-            className={`btn-sim-pill pink ${simulating === 'lfi' ? 'loading' : ''}`}
-            onClick={() => handleTriggerSimulate('lfi')}
-            disabled={!!simulating}
-            title="Gửi Payload Path Traversal (/etc/passwd)"
-          >
-            <i className="fa-solid fa-folder-open"></i> LFI
-          </button>
-          <button
-            className={`btn-sim-pill purple ${simulating === 'scanner' ? 'loading' : ''}`}
-            onClick={() => handleTriggerSimulate('scanner')}
-            disabled={!!simulating}
-            title="Mô phỏng Scanner Nikto/Nmap"
-          >
-            <i className="fa-solid fa-radar"></i> Scanner
-          </button>
-          <button className="btn-sim-refresh" onClick={onRefresh} title="Làm mới số liệu">
             <i className="fa-solid fa-arrows-rotate"></i>
           </button>
         </div>
       </div>
 
-      <RangeOverview
-        timeFilter={timeFilter}
-        onChange={handleTimeChange}
-        stats={stats}
-      />
-
-      {/* 1. TOP ROW: Requests Today + Request Trends + System Status */}
+      {/* 1. TOP ROW: 3 Cards Horizontally Aligned (Stats | Dual-Line Chart | Hardware) */}
       <div className="overview-top-row">
-        {/* Requests Today & Malicious requests Card */}
+        {/* Card 1: Requests today & Malicious requests */}
         <div className="dashboard-card card-today-stats">
           <div className="stat-item-box">
             <div className="stat-header-label">
-              <span className="icon-circle-pill green">
-                <i className="fa-solid fa-chart-line"></i>
+              <span className="icon-circle-pill green" style={{ background: '#ecfdf5', color: '#10b981' }}>
+                <i className="fa-solid fa-eye"></i>
               </span>
-              <span>Lưu lượng hôm nay</span>
+              <span>Requests today</span>
             </div>
             <div className="stat-big-num green-gradient-text">{formatNumber(requestsToday)}</div>
             <div className="stat-sub-info">
               <span className="stat-trend-tag green"><i className="fa-solid fa-arrow-up"></i> +14.2%</span>
-              <span className="stat-sub-txt">Tổng HTTP requests</span>
+              <span className="stat-sub-txt">Tổng HTTP</span>
             </div>
           </div>
 
@@ -351,10 +397,10 @@ export default function Overview({
 
           <div className="stat-item-box">
             <div className="stat-header-label">
-              <span className="icon-circle-pill red">
-                <i className="fa-solid fa-shield-virus"></i>
+              <span className="icon-circle-pill red" style={{ background: '#fef2f2', color: '#ef4444' }}>
+                <i className="fa-solid fa-eye"></i>
               </span>
-              <span>Đã chặn hôm nay</span>
+              <span>Malicious requests</span>
             </div>
             <div className="stat-big-num red-gradient-text">{formatNumber(totalAttacks)}</div>
             <div className="stat-sub-info">
@@ -364,18 +410,25 @@ export default function Overview({
           </div>
         </div>
 
-        {/* Request Trends Line Chart */}
+        {/* Card 2: Request Trends Line Chart */}
         <div className="dashboard-card card-trend-chart">
           <div className="trends-header-flex">
             <div className="trends-title-wrap">
               <span className="trends-icon-dot green"></span>
-              <span className="trends-title">Xu hướng lưu lượng truy cập (Traffic Trends)</span>
+              <span className="trends-title">Xu hướng lưu lượng & Tấn công WAF</span>
             </div>
-            <div className="trends-legend-flex">
-              <span className="legend-badge green"><span className="legend-dot green"></span> Tổng Request</span>
+            <div className="trends-legend-flex" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <span className="legend-badge green" style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '11px', color: '#047857', fontWeight: 600 }}>
+                <span className="legend-dot green" style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#10b981' }}></span>
+                Tổng lưu lượng ({trendTotals.reduce((a, b) => a + b, 0).toLocaleString()} req)
+              </span>
+              <span className="legend-badge red" style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '11px', color: '#b91c1c', fontWeight: 600 }}>
+                <span className="legend-dot red" style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#ef4444' }}></span>
+                Đã chặn ({trendBlocked.reduce((a, b) => a + b, 0).toLocaleString()} req)
+              </span>
             </div>
           </div>
-          <div style={{ height: '115px', marginTop: '6px' }}>
+          <div style={{ height: '145px', marginTop: '6px' }}>
             <Line data={trendChartData} options={trendChartOptions} />
           </div>
         </div>
@@ -422,55 +475,53 @@ export default function Overview({
         </div>
       </div>
 
-      {/* 2. MIDDLE ROW: Left 3 Telemetry Sparklines + Right Access Map */}
-      <div className="overview-middle-row">
-        {/* Left 3 Sparklines */}
-        <div className="telemetry-spark-stack">
-          <div className="spark-card">
-            <div className="spark-header">
-              <div className="spark-title-left">
-                <i className="fa-solid fa-bolt" style={{ color: '#10b981' }}></i>
-                <span>QPS Đang xử lý:</span>
-                <strong className="spark-highlight green">{telemetry.qps}</strong>
-              </div>
-              <span className="badge-status green-light">Real-time</span>
+      {/* 2. REAL-TIME TELEMETRY SPARKLINES: 3 Equal-Width Cards */}
+      <div className="telemetry-spark-row">
+        <div className="spark-card">
+          <div className="spark-header">
+            <div className="spark-title-left">
+              <i className="fa-solid fa-bolt" style={{ color: '#10b981' }}></i>
+              <span>QPS Đang xử lý:</span>
+              <strong className="spark-highlight green">{telemetry.qps}</strong>
             </div>
-            <div className="spark-chart-box">
-              <Line data={qpsData} options={createSparkOptions('#10b981')} />
-            </div>
+            <span className="badge-status green-light">Real-time</span>
           </div>
-
-          <div className="spark-card">
-            <div className="spark-header">
-              <div className="spark-title-left">
-                <i className="fa-solid fa-stopwatch" style={{ color: '#3b82f6' }}></i>
-                <span>Resource Latency:</span>
-                <strong className="spark-highlight blue">{telemetry.resource_time}</strong>
-              </div>
-              <span className="badge-status blue-light">Độ trễ</span>
-            </div>
-            <div className="spark-chart-box">
-              <Line data={latencyData} options={createSparkOptions('#3b82f6')} />
-            </div>
-          </div>
-
-          <div className="spark-card">
-            <div className="spark-header">
-              <div className="spark-title-left">
-                <i className="fa-solid fa-network-wired" style={{ color: '#f59e0b' }}></i>
-                <span>Băng thông Tx/Rx:</span>
-                <strong className="spark-highlight orange">{telemetry.transmit_kb}</strong>
-              </div>
-              <span className="badge-status gray-light">{telemetry.receive_kb} Rx</span>
-            </div>
-            <div className="spark-chart-box">
-              <Line data={trafficData} options={createSparkOptions('#f59e0b')} />
-            </div>
+          <div className="spark-chart-box">
+            <Line data={qpsData} options={createSparkOptions('#10b981')} />
           </div>
         </div>
 
-        {/* Right Access Threat Map & Rank Table */}
-        <div className="dashboard-card access-map-card">
+        <div className="spark-card">
+          <div className="spark-header">
+            <div className="spark-title-left">
+              <i className="fa-solid fa-stopwatch" style={{ color: '#3b82f6' }}></i>
+              <span>Resource Latency:</span>
+              <strong className="spark-highlight blue">{telemetry.resource_time}</strong>
+            </div>
+            <span className="badge-status blue-light">Độ trễ</span>
+          </div>
+          <div className="spark-chart-box">
+            <Line data={latencyData} options={createSparkOptions('#3b82f6')} />
+          </div>
+        </div>
+
+        <div className="spark-card">
+          <div className="spark-header">
+            <div className="spark-title-left">
+              <i className="fa-solid fa-network-wired" style={{ color: '#f59e0b' }}></i>
+              <span>Băng thông Tx/Rx:</span>
+              <strong className="spark-highlight orange">{telemetry.transmit_kb}</strong>
+            </div>
+            <span className="badge-status gray-light">{telemetry.receive_kb} Rx</span>
+          </div>
+          <div className="spark-chart-box">
+            <Line data={trafficData} options={createSparkOptions('#f59e0b')} />
+          </div>
+        </div>
+      </div>
+
+      {/* 3. THREAT RADAR MAP & TOP ATTACKERS (Full Width Card) */}
+      <div className="dashboard-card access-map-card" style={{ marginTop: '16px' }}>
           <div className="access-map-top-bar">
             <div className="map-title-wrap">
               <span className="icon-circle-sm green">
@@ -560,7 +611,6 @@ export default function Overview({
             </div>
           </div>
         </div>
-      </div>
 
       {/* 3. BOTTOM ROW: Slow Request Table (Left) + Latest News Interceptions Table (Right) */}
       <div className="overview-bottom-row">
@@ -594,7 +644,7 @@ export default function Overview({
                 ) : (
                   slowRequests.map((item, idx) => (
                     <tr key={idx}>
-                      <td style={{ fontSize: '11px', color: '#64748b' }}>{item.date?.slice(11, 19) || item.date}</td>
+                      <td style={{ fontSize: '11px', color: '#64748b', whiteSpace: 'nowrap' }}>{formatLocalTime(item.date)}</td>
                       <td>
                         <div className="uri-cell-wrap mono-code" title={safeDecodeURI(item.uri)}>
                           {safeDecodeURI(item.uri)}
@@ -642,7 +692,7 @@ export default function Overview({
                 ) : (
                   latestNews.map((news) => (
                     <tr key={news.id}>
-                      <td style={{ fontSize: '11px', color: '#64748b' }}>{news.access_time?.slice(11, 19) || news.access_time}</td>
+                      <td style={{ fontSize: '11px', color: '#64748b', whiteSpace: 'nowrap' }}>{formatLocalTime(news.access_time)}</td>
                       <td>
                         <span className="mono-code ip-bold-txt">{news.bad_ip}</span>
                       </td>

@@ -152,9 +152,35 @@ export default function InterceptionLogs({
   const [severityFilter, setSeverityFilter] = useState('');
   const [timeFilter, setTimeFilter] = useState('all'); // 'all', 'today', 'yesterday', '7days'
 
-  // Stream Freeze / Pause state
-  const [streamPaused, setStreamPaused] = useState(false);
-  const [frozenLogs, setFrozenLogs] = useState([]);
+  // Resilient Clipboard Copy Helper (works on HTTP, LAN IP 192.168.x.x, and HTTPS)
+  const copyToClipboard = async (text) => {
+    if (!text) return false;
+    try {
+      if (navigator?.clipboard?.writeText && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch (e) {
+      // Fall through to fallback
+    }
+
+    try {
+      const textArea = document.createElement('textarea');
+      textArea.value = text;
+      textArea.style.position = 'fixed';
+      textArea.style.left = '-999999px';
+      textArea.style.top = '-999999px';
+      textArea.setAttribute('readonly', '');
+      document.body.appendChild(textArea);
+      textArea.select();
+      const successful = document.execCommand('copy');
+      document.body.removeChild(textArea);
+      return successful;
+    } catch (err) {
+      console.error('Fallback copy failed:', err);
+      return false;
+    }
+  };
 
   // Modal & Detail states
   const [selectedLogModal, setSelectedLogModal] = useState(null);
@@ -227,25 +253,11 @@ export default function InterceptionLogs({
     }
   };
 
-  // Handle stream pause/resume
-  const handleToggleStreamPause = () => {
-    if (!streamPaused) {
-      setFrozenLogs([...logs]);
-      setStreamPaused(true);
-    } else {
-      setStreamPaused(false);
-      setFrozenLogs([]);
-    }
-  };
-
-  // Source list: If paused, use snapshot
-  const activeSourceLogs = streamPaused && frozenLogs.length > 0 ? frozenLogs : logs;
-
   // Deduplicate and filter logs
   const filteredLogs = useMemo(() => {
     const seen = new Set();
     const uniqueLogs = [];
-    activeSourceLogs.forEach((log) => {
+    logs.forEach((log) => {
       const key = log.id ? `id-${log.id}` : `txn-${log.txn_id}`;
       if (!seen.has(key)) {
         seen.add(key);
@@ -308,7 +320,7 @@ export default function InterceptionLogs({
       }
       return true;
     });
-  }, [activeSourceLogs, searchQuery, typeFilter, methodFilter, severityFilter, timeFilter]);
+  }, [logs, searchQuery, typeFilter, methodFilter, severityFilter, timeFilter]);
 
   // Distribution of attack types for Chart
   const attackCounts = useMemo(() => {
@@ -334,15 +346,16 @@ export default function InterceptionLogs({
     return counts;
   }, [filteredLogs]);
 
-  // Doughnut Chart Data
+  // Doughnut Chart Data (Modern Corporate Cybersecurity Palette)
   const donutData = {
     labels: Object.keys(attackCounts),
     datasets: [
       {
         data: Object.values(attackCounts),
-        backgroundColor: ['#ef4444', '#a855f7', '#f97316', '#ec4899', '#38bdf8', '#eab308'],
-        borderWidth: 2,
-        borderColor: '#0f172a',
+        backgroundColor: ['#2563eb', '#7c3aed', '#d97706', '#e11d48', '#059669', '#0284c7'],
+        borderWidth: 3,
+        borderColor: '#ffffff',
+        hoverOffset: 6,
       },
     ],
   };
@@ -353,38 +366,70 @@ export default function InterceptionLogs({
     plugins: {
       legend: {
         position: 'right',
-        labels: { boxWidth: 8, font: { size: 10 }, padding: 6, color: '#94a3b8' },
+        labels: {
+          boxWidth: 8,
+          font: { size: 11, family: 'Inter', weight: '600' },
+          padding: 8,
+          color: '#334155',
+          usePointStyle: true,
+          pointStyle: 'circle',
+        },
+      },
+      tooltip: {
+        backgroundColor: '#0f172a',
+        padding: 8,
+        cornerRadius: 6,
       },
     },
-    cutout: '72%',
+    cutout: '70%',
   };
 
-  // Hourly timeline activity
+  // Dynamic rolling hourly timeline activity (last 8 chronological hours)
   const hourlyActivity = useMemo(() => {
-    const hours = ['00:00', '03:00', '06:00', '09:00', '12:00', '15:00', '18:00', '21:00', 'Now'];
-    const counts = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+    const now = new Date();
+    const buckets = [];
+    for (let i = 7; i >= 0; i--) {
+      const d = new Date(now.getTime() - i * 3600 * 1000);
+      const label = `${String(d.getHours()).padStart(2, '0')}:00`;
+      const startMs = new Date(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), 0, 0).getTime();
+      const endMs = new Date(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), 59, 59, 999).getTime();
+      buckets.push({ label, startMs, endMs, count: 0 });
+    }
 
     filteredLogs.forEach((l) => {
-      if (l.timestamp && l.timestamp.length >= 13) {
-        const hour = parseInt(l.timestamp.slice(11, 13), 10);
-        const idx = Math.min(Math.floor(hour / 3), 8);
-        counts[idx]++;
-      } else {
-        counts[8]++;
+      if (!l.timestamp) return;
+      let tStr = l.timestamp;
+      if (!tStr.endsWith('Z') && !tStr.includes('+')) {
+        tStr = tStr.replace(' ', 'T') + 'Z';
+      }
+      const logMs = new Date(tStr).getTime();
+      if (isNaN(logMs)) return;
+
+      const matched = buckets.find((b) => logMs >= b.startMs && logMs <= b.endMs);
+      if (matched) {
+        matched.count++;
+      } else if (logMs >= buckets[0].startMs) {
+        buckets[buckets.length - 1].count++;
       }
     });
 
-    return { hours, counts };
+    return {
+      hours: buckets.map((b) => b.label),
+      counts: buckets.map((b) => b.count),
+    };
   }, [filteredLogs]);
 
   const barData = {
     labels: hourlyActivity.hours,
     datasets: [
       {
-        label: 'Threats Blocked',
+        label: 'Sự cố chặn',
         data: hourlyActivity.counts,
-        backgroundColor: 'rgba(16, 185, 129, 0.85)',
-        borderRadius: 4,
+        backgroundColor: '#10b981',
+        hoverBackgroundColor: '#059669',
+        borderRadius: 6,
+        borderSkipped: false,
+        barPercentage: 0.5,
       },
     ],
   };
@@ -392,10 +437,27 @@ export default function InterceptionLogs({
   const barOptions = {
     responsive: true,
     maintainAspectRatio: false,
-    plugins: { legend: { display: false } },
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        backgroundColor: '#0f172a',
+        padding: 8,
+        cornerRadius: 6,
+        callbacks: {
+          label: (ctx) => ` Đã chặn: ${ctx.parsed.y} sự cố`,
+        },
+      },
+    },
     scales: {
-      x: { grid: { display: false }, ticks: { color: '#64748b', font: { size: 9 } } },
-      y: { grid: { color: 'rgba(51, 65, 85, 0.4)' }, ticks: { color: '#64748b', font: { size: 9 }, precision: 0 }, beginAtZero: true },
+      x: {
+        grid: { display: false },
+        ticks: { color: '#64748b', font: { size: 10, family: 'Inter' } },
+      },
+      y: {
+        grid: { color: '#f1f5f9' },
+        ticks: { color: '#64748b', font: { size: 10, family: 'Inter' }, precision: 0 },
+        beginAtZero: true,
+      },
     },
   };
 
@@ -457,70 +519,111 @@ export default function InterceptionLogs({
     setSelectedLogIds(new Set());
   };
 
-  // Export handlers
+  // Professional Export Handlers (UTF-8 BOM for Excel & Formatted JSON)
   const handleExportCSV = () => {
-    const headers = ['ID', 'Timestamp', 'Client IP', 'Country', 'Method', 'URI', 'Attack Type', 'Rule ID', 'Severity', 'Status'];
+    if (!filteredLogs || filteredLogs.length === 0) {
+      alert('Không có bản ghi sự cố nào trong bộ lọc hiện tại để xuất.');
+      return;
+    }
+    const headers = [
+      'STT (ID)',
+      'Thời Gian (Timestamp)',
+      'IP Nguồn (Client IP)',
+      'Quốc Gia',
+      'Thành Phố',
+      'Phương Thức',
+      'Mục Tiêu (URI)',
+      'Website Đích',
+      'Phân Loại Tấn Công',
+      'Quy Tắc CRS (Rule ID)',
+      'Mô Tả Quy Tắc',
+      'Mức Độ Nguy Hiểm',
+      'Phản Hồi WAF',
+    ];
     const rows = filteredLogs.map((l) => {
       const geo = getGeoInfo(l.client_ip, l);
       const sev = getSeverity(l.attack_type, l.rule_id);
+      const timeInfo = formatTimestamp(l.timestamp);
       return [
-        l.id,
-        `"${l.timestamp}"`,
-        `"${l.client_ip}"`,
-        `"${geo.country}"`,
-        l.method,
+        l.id || l.txn_id || '',
+        `"${timeInfo.full}"`,
+        `"${l.client_ip || ''}"`,
+        `"${(geo.country || 'Unknown').replace(/"/g, '""')}"`,
+        `"${(geo.city || '').replace(/"/g, '""')}"`,
+        l.method || 'GET',
         `"${(l.uri || '').replace(/"/g, '""')}"`,
-        `"${l.attack_type}"`,
-        l.rule_id,
-        sev.level,
+        `"${(l.target_host || 'Default').replace(/"/g, '""')}"`,
+        `"${(l.attack_type || 'General').replace(/"/g, '""')}"`,
+        l.rule_id || '',
+        `"${(l.rule_msg || '').replace(/"/g, '""')}"`,
+        sev.level || 'MEDIUM',
         '403 Forbidden',
       ];
     });
-    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
+    // \uFEFF UTF-8 BOM ensures Microsoft Excel renders Vietnamese characters correctly
+    const csvContent = '\uFEFF' + [headers.join(','), ...rows.map((e) => e.join(','))].join('\r\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.href = encodeURI(csvContent);
-    link.download = `coraza_waf_interceptions_${new Date().toISOString().slice(0, 10)}.csv`;
+    link.href = url;
+    link.setAttribute('download', `WAF_Interception_Report_${new Date().toISOString().slice(0, 10)}.csv`);
+    document.body.appendChild(link);
     link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   const handleExportJSON = () => {
-    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(filteredLogs, null, 2));
+    if (!filteredLogs || filteredLogs.length === 0) {
+      alert('Không có bản ghi sự cố nào trong bộ lọc hiện tại để xuất.');
+      return;
+    }
+    const jsonContent = JSON.stringify(filteredLogs, null, 2);
+    const blob = new Blob([jsonContent], { type: 'application/json;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.href = dataStr;
-    link.download = `coraza_waf_interceptions_${new Date().toISOString().slice(0, 10)}.json`;
+    link.href = url;
+    link.setAttribute('download', `WAF_Interception_Forensics_${new Date().toISOString().slice(0, 10)}.json`);
+    document.body.appendChild(link);
     link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
-  const copyCurlRepro = (log) => {
+  const copyCurlRepro = async (log) => {
     const host = window.location.hostname || '192.168.246.100';
     const curlCmd = `curl -i -X ${log.method || 'GET'} "http://${host}${log.uri}" -A "${log.user_agent || 'Mozilla/5.0'}"`;
-    navigator.clipboard.writeText(curlCmd);
-    setCopiedCurl(true);
-    setTimeout(() => setCopiedCurl(false), 2000);
+    const ok = await copyToClipboard(curlCmd);
+    if (ok) {
+      setCopiedCurl(true);
+      setTimeout(() => setCopiedCurl(false), 2000);
+    }
   };
 
-  const handleCopyIP = (ip) => {
-    navigator.clipboard.writeText(ip);
-    setCopiedIP(ip);
-    setTimeout(() => setCopiedIP(null), 1800);
+  const handleCopyIP = async (ip) => {
+    const ok = await copyToClipboard(ip);
+    if (ok) {
+      setCopiedIP(ip);
+      setTimeout(() => setCopiedIP(null), 1800);
+    }
   };
 
   return (
     <div className="tab-panel active" style={{ animation: 'fadeInPanel 0.25s ease' }}>
-      {/* 1. TOP ENTERPRISE SOC HERO BAR */}
+      {/* 1. TOP ENTERPRISE SOC HERO BAR (Light Theme) */}
       <div
         style={{
-          background: 'linear-gradient(135deg, #0b1329 0%, #0f172a 60%, #11293a 100%)',
-          border: '1px solid #1e293b',
-          borderRadius: '12px',
+          background: '#ffffff',
+          border: '1px solid #e2e8f0',
+          borderRadius: '10px',
           padding: '16px 20px',
-          marginBottom: '16px',
+          marginBottom: '14px',
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
           flexWrap: 'wrap',
           gap: '14px',
-          boxShadow: '0 4px 20px -2px rgba(0, 0, 0, 0.4)',
+          boxShadow: '0 1px 3px rgba(0, 0, 0, 0.02)',
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
@@ -529,70 +632,74 @@ export default function InterceptionLogs({
               width: '42px',
               height: '42px',
               borderRadius: '10px',
-              background: 'rgba(239, 68, 68, 0.15)',
-              border: '1px solid rgba(239, 68, 68, 0.3)',
+              background: '#f8fafc',
+              border: '1px solid #e2e8f0',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              color: '#f87171',
+              color: '#0f172a',
               fontSize: '18px',
             }}
           >
-            <i className="fa-solid fa-shield-virus"></i>
+            <i className="fa-solid fa-shield-virus" style={{ color: '#dc2626' }}></i>
           </div>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 800, color: '#f8fafc', letterSpacing: '-0.2px' }}>
-                Cyber Forensics & Interception Feed
+              <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 800, color: '#0f172a', letterSpacing: '-0.2px' }}>
+                Nhật Ký Chặn & Điều Tra Sự Cố (Interception Forensics)
               </h3>
               <span
                 style={{
-                  fontSize: '10.5px',
+                  fontSize: '11px',
                   fontWeight: 700,
                   padding: '2px 8px',
                   borderRadius: '12px',
-                  background: 'rgba(16, 185, 129, 0.15)',
-                  color: '#34d399',
-                  border: '1px solid rgba(16, 185, 129, 0.3)',
+                  background: '#f1f5f9',
+                  color: '#475569',
+                  border: '1px solid #e2e8f0',
                   display: 'inline-flex',
                   alignItems: 'center',
                   gap: '4px',
                 }}
               >
-                <i className="fa-solid fa-shield-halved"></i> CRS v4.9
+                <i className="fa-solid fa-shield-halved" style={{ color: '#10b981' }}></i> Coraza · CRS v4
               </span>
             </div>
-            <p style={{ margin: '3px 0 0', fontSize: '12px', color: '#94a3b8' }}>
-              Luồng giám sát & phân tích sự cố bảo mật theo thời gian thực từ Coraza SPOA WAF Engine.
+            <p style={{ margin: '3px 0 0', fontSize: '12.5px', color: '#64748b' }}>
+              Giám sát và phân tích pháp y các sự cố an ninh theo thời gian thực được phát hiện và ngăn chặn bởi Coraza WAF Engine.
             </p>
           </div>
         </div>
 
         {/* Real-time Status Badges & Action Controls */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-          {/* Stream Pause/Resume Toggle */}
-          <button
-            type="button"
-            onClick={handleToggleStreamPause}
-            title={streamPaused ? 'Tiếp tục nhận luồng trực tiếp' : 'Tạm dừng luồng để phân tích sự cố'}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+          {/* Live WebSocket Status Pill (No redundant pause/resume button) */}
+          <div
             style={{
-              padding: '6px 12px',
-              borderRadius: '8px',
-              border: streamPaused ? '1px solid #f59e0b' : '1px solid rgba(16, 185, 129, 0.4)',
-              background: streamPaused ? 'rgba(245, 158, 11, 0.15)' : 'rgba(16, 185, 129, 0.15)',
-              color: streamPaused ? '#fbbf24' : '#34d399',
-              fontSize: '12px',
-              fontWeight: 700,
-              cursor: 'pointer',
               display: 'inline-flex',
               alignItems: 'center',
               gap: '6px',
-              transition: 'all 0.15s',
+              padding: '6px 12px',
+              borderRadius: '6px',
+              background: '#f0fdf4',
+              border: '1px solid #bbf7d0',
+              color: '#15803d',
+              fontSize: '11.5px',
+              fontWeight: 700,
             }}
           >
-            <i className={`fa-solid ${streamPaused ? 'fa-play' : 'fa-pause'}`}></i>
-            <span>{streamPaused ? 'Stream Đã Dừng' : 'Live Stream'}</span>
-          </button>
+            <span
+              style={{
+                width: '7px',
+                height: '7px',
+                borderRadius: '50%',
+                background: '#16a34a',
+                display: 'inline-block',
+                boxShadow: '0 0 0 2px rgba(22,163,74,0.2)',
+              }}
+            ></span>
+            <span>Live Stream WAF</span>
+          </div>
 
           {/* Sound Alert Toggle */}
           <button
@@ -600,82 +707,95 @@ export default function InterceptionLogs({
             onClick={() => setSoundEnabled && setSoundEnabled(!soundEnabled)}
             title={soundEnabled ? 'Âm thanh cảnh báo: BẬT' : 'Âm thanh cảnh báo: TẮT'}
             style={{
-              width: '34px',
               height: '34px',
-              borderRadius: '8px',
-              border: '1px solid #334155',
-              background: soundEnabled ? 'rgba(16, 185, 129, 0.2)' : 'rgba(30, 41, 59, 0.6)',
-              color: soundEnabled ? '#10b981' : '#64748b',
-              fontSize: '13px',
+              padding: '0 10px',
+              borderRadius: '6px',
+              border: '1px solid #cbd5e1',
+              background: soundEnabled ? '#dcfce7' : '#ffffff',
+              color: soundEnabled ? '#16a34a' : '#64748b',
+              fontSize: '12px',
+              fontWeight: 600,
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
-              justifyContent: 'center',
+              gap: '6px',
+              transition: 'all 0.15s ease',
             }}
           >
             <i className={`fa-solid ${soundEnabled ? 'fa-volume-high' : 'fa-volume-xmark'}`}></i>
+            <span>{soundEnabled ? 'Chuông Bật' : 'Chuông Tắt'}</span>
           </button>
 
-          {/* Export Dropdown / Buttons */}
+          {/* Professional Export CSV Button */}
           <button
             type="button"
             onClick={handleExportCSV}
-            title="Xuất file CSV báo cáo"
+            title={`Xuất ${filteredLogs.length} bản ghi sự cố ra file Excel / CSV (hỗ trợ tiếng Việt)`}
             style={{
-              width: '34px',
               height: '34px',
-              borderRadius: '8px',
-              border: '1px solid #334155',
-              background: 'rgba(30, 41, 59, 0.6)',
-              color: '#34d399',
-              fontSize: '13px',
+              padding: '0 12px',
+              borderRadius: '6px',
+              border: '1px solid #86efac',
+              background: '#ffffff',
+              color: '#15803d',
+              fontSize: '12px',
+              fontWeight: 700,
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
-              justifyContent: 'center',
+              gap: '6px',
+              boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
+              transition: 'all 0.15s ease',
             }}
           >
-            <i className="fa-solid fa-file-csv"></i>
+            <i className="fa-solid fa-file-excel" style={{ color: '#16a34a', fontSize: '13px' }}></i>
+            <span>Xuất Excel ({filteredLogs.length})</span>
           </button>
 
+          {/* Professional Export JSON Button */}
           <button
             type="button"
             onClick={handleExportJSON}
-            title="Xuất file JSON thô"
+            title={`Xuất ${filteredLogs.length} sự cố sang định dạng JSON thô`}
             style={{
-              width: '34px',
               height: '34px',
-              borderRadius: '8px',
-              border: '1px solid #334155',
-              background: 'rgba(30, 41, 59, 0.6)',
-              color: '#38bdf8',
-              fontSize: '13px',
+              padding: '0 12px',
+              borderRadius: '6px',
+              border: '1px solid #93c5fd',
+              background: '#ffffff',
+              color: '#1d4ed8',
+              fontSize: '12px',
+              fontWeight: 700,
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
-              justifyContent: 'center',
+              gap: '6px',
+              boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
+              transition: 'all 0.15s ease',
             }}
           >
-            <i className="fa-solid fa-file-code"></i>
+            <i className="fa-solid fa-code" style={{ color: '#2563eb', fontSize: '13px' }}></i>
+            <span>Xuất JSON</span>
           </button>
 
           {/* Reload / Refresh Button */}
           <button
             type="button"
             onClick={onRefresh}
-            title="Tải lại toàn bộ dữ liệu"
+            title="Đồng bộ lại toàn bộ dữ liệu từ WAF"
             style={{
               width: '34px',
               height: '34px',
-              borderRadius: '8px',
-              border: '1px solid #334155',
-              background: 'rgba(30, 41, 59, 0.6)',
-              color: '#94a3b8',
+              borderRadius: '6px',
+              border: '1px solid #cbd5e1',
+              background: '#ffffff',
+              color: '#475569',
               fontSize: '13px',
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
+              transition: 'all 0.15s ease',
             }}
           >
             <i className="fa-solid fa-rotate"></i>
@@ -683,94 +803,214 @@ export default function InterceptionLogs({
         </div>
       </div>
 
-      {/* 2. TOP METRICS STRIP (4 Mini SOC KPI Cards) */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: '12px', marginBottom: '16px' }}>
-        <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: '10px', padding: '14px 18px', display: 'flex', alignItems: 'center', gap: '14px' }}>
-          <div style={{ width: '40px', height: '40px', borderRadius: '8px', background: 'rgba(239, 68, 68, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#f87171', fontSize: '18px' }}>
-            <i className="fa-solid fa-shield-virus"></i>
-          </div>
+      {/* 2. TOP METRICS STRIP (4 Enterprise KPI Summary Cards) */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '14px', marginBottom: '14px' }}>
+        {/* Card 1: Tổng Sự Cố Chặn */}
+        <div
+          style={{
+            background: '#ffffff',
+            border: '1px solid #e2e8f0',
+            borderRadius: '10px',
+            padding: '16px 18px',
+            display: 'flex',
+            alignItems: 'flex-start',
+            justifyContent: 'space-between',
+            boxShadow: '0 1px 3px rgba(0, 0, 0, 0.02)',
+            transition: 'border-color 0.15s ease',
+          }}
+        >
           <div>
-            <div style={{ fontSize: '11px', textTransform: 'uppercase', color: '#94a3b8', fontWeight: 600, letterSpacing: '0.5px' }}>Tổng Số Chặn (403)</div>
-            <div style={{ fontSize: '20px', fontWeight: 800, color: '#f87171', marginTop: '2px' }}>
-              {stats.total_attacks || filteredLogs.length} <span style={{ fontSize: '12px', color: '#64748b', fontWeight: 400 }}>lần</span>
+            <div style={{ fontSize: '11px', textTransform: 'uppercase', color: '#64748b', fontWeight: 700, letterSpacing: '0.5px' }}>
+              Tổng Sự Cố Chặn
+            </div>
+            <div style={{ fontSize: '24px', fontWeight: 800, color: '#0f172a', marginTop: '4px', letterSpacing: '-0.5px' }}>
+              {stats.total_attacks || filteredLogs.length}{' '}
+              <span style={{ fontSize: '13px', color: '#64748b', fontWeight: 500 }}>lần</span>
+            </div>
+            <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <i className="fa-solid fa-shield-halved" style={{ fontSize: '10px', color: '#dc2626' }}></i>
+              <span>Quy tắc CRS phát hiện & ngăn chặn</span>
             </div>
           </div>
+          <span
+            style={{
+              fontSize: '10.5px',
+              fontWeight: 700,
+              padding: '2px 8px',
+              borderRadius: '6px',
+              background: '#fef2f2',
+              color: '#dc2626',
+              border: '1px solid #fecaca',
+            }}
+          >
+            403 Deny
+          </span>
         </div>
 
-        <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: '10px', padding: '14px 18px', display: 'flex', alignItems: 'center', gap: '14px' }}>
-          <div style={{ width: '40px', height: '40px', borderRadius: '8px', background: 'rgba(249, 115, 22, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fb923c', fontSize: '18px' }}>
-            <i className="fa-solid fa-fire-flame-curved"></i>
-          </div>
+        {/* Card 2: Mối Đe Dọa Hôm Nay */}
+        <div
+          style={{
+            background: '#ffffff',
+            border: '1px solid #e2e8f0',
+            borderRadius: '10px',
+            padding: '16px 18px',
+            display: 'flex',
+            alignItems: 'flex-start',
+            justifyContent: 'space-between',
+            boxShadow: '0 1px 3px rgba(0, 0, 0, 0.02)',
+            transition: 'border-color 0.15s ease',
+          }}
+        >
           <div>
-            <div style={{ fontSize: '11px', textTransform: 'uppercase', color: '#94a3b8', fontWeight: 600, letterSpacing: '0.5px' }}>Mối Đe Dọa Hôm Nay</div>
-            <div style={{ fontSize: '20px', fontWeight: 800, color: '#fb923c', marginTop: '2px' }}>
-              {stats.malicious_requests_today || stats.attacks_today || 0} <span style={{ fontSize: '12px', color: '#64748b', fontWeight: 400 }}>vụ</span>
+            <div style={{ fontSize: '11px', textTransform: 'uppercase', color: '#64748b', fontWeight: 700, letterSpacing: '0.5px' }}>
+              Mối Đe Dọa Hôm Nay
+            </div>
+            <div style={{ fontSize: '24px', fontWeight: 800, color: '#0f172a', marginTop: '4px', letterSpacing: '-0.5px' }}>
+              {stats.malicious_requests_today || stats.attacks_today || 0}{' '}
+              <span style={{ fontSize: '13px', color: '#64748b', fontWeight: 500 }}>vụ</span>
+            </div>
+            <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <i className="fa-regular fa-clock" style={{ fontSize: '10px', color: '#d97706' }}></i>
+              <span>Phát sinh trong 24 giờ qua</span>
             </div>
           </div>
+          <span
+            style={{
+              fontSize: '10.5px',
+              fontWeight: 700,
+              padding: '2px 8px',
+              borderRadius: '6px',
+              background: '#fffbeb',
+              color: '#b45309',
+              border: '1px solid #fde68a',
+            }}
+          >
+            24h Window
+          </span>
         </div>
 
-        <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: '10px', padding: '14px 18px', display: 'flex', alignItems: 'center', gap: '14px' }}>
-          <div style={{ width: '40px', height: '40px', borderRadius: '8px', background: 'rgba(56, 189, 248, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#38bdf8', fontSize: '18px' }}>
-            <i className="fa-solid fa-network-wired"></i>
-          </div>
+        {/* Card 3: IP Nguồn Độc Hại */}
+        <div
+          style={{
+            background: '#ffffff',
+            border: '1px solid #e2e8f0',
+            borderRadius: '10px',
+            padding: '16px 18px',
+            display: 'flex',
+            alignItems: 'flex-start',
+            justifyContent: 'space-between',
+            boxShadow: '0 1px 3px rgba(0, 0, 0, 0.02)',
+            transition: 'border-color 0.15s ease',
+          }}
+        >
           <div>
-            <div style={{ fontSize: '11px', textTransform: 'uppercase', color: '#94a3b8', fontWeight: 600, letterSpacing: '0.5px' }}>IP Nguồn Độc Hại</div>
-            <div style={{ fontSize: '20px', fontWeight: 800, color: '#38bdf8', marginTop: '2px' }}>
-              {new Set(logs.map((l) => l.client_ip)).size || 1} <span style={{ fontSize: '12px', color: '#64748b', fontWeight: 400 }}>độc lập</span>
+            <div style={{ fontSize: '11px', textTransform: 'uppercase', color: '#64748b', fontWeight: 700, letterSpacing: '0.5px' }}>
+              IP Nguồn Độc Hại
+            </div>
+            <div style={{ fontSize: '24px', fontWeight: 800, color: '#0f172a', marginTop: '4px', letterSpacing: '-0.5px' }}>
+              {new Set(logs.map((l) => l.client_ip)).size || 1}{' '}
+              <span style={{ fontSize: '13px', color: '#64748b', fontWeight: 500 }}>độc lập</span>
+            </div>
+            <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <i className="fa-solid fa-network-wired" style={{ fontSize: '10px', color: '#0284c7' }}></i>
+              <span>Địa chỉ IP phát sinh tấn công</span>
             </div>
           </div>
+          <span
+            style={{
+              fontSize: '10.5px',
+              fontWeight: 700,
+              padding: '2px 8px',
+              borderRadius: '6px',
+              background: '#f0f9ff',
+              color: '#0369a1',
+              border: '1px solid #bae6fd',
+            }}
+          >
+            Attacker Pool
+          </span>
         </div>
 
-        <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: '10px', padding: '14px 18px', display: 'flex', alignItems: 'center', gap: '14px' }}>
-          <div style={{ width: '40px', height: '40px', borderRadius: '8px', background: 'rgba(16, 185, 129, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#34d399', fontSize: '18px' }}>
-            <i className="fa-solid fa-circle-check"></i>
-          </div>
+        {/* Card 4: Tỷ Lệ Thực Thi WAF */}
+        <div
+          style={{
+            background: '#ffffff',
+            border: '1px solid #e2e8f0',
+            borderRadius: '10px',
+            padding: '16px 18px',
+            display: 'flex',
+            alignItems: 'flex-start',
+            justifyContent: 'space-between',
+            boxShadow: '0 1px 3px rgba(0, 0, 0, 0.02)',
+            transition: 'border-color 0.15s ease',
+          }}
+        >
           <div>
-            <div style={{ fontSize: '11px', textTransform: 'uppercase', color: '#94a3b8', fontWeight: 600, letterSpacing: '0.5px' }}>Tỷ Lệ Chặn Thành Công</div>
-            <div style={{ fontSize: '20px', fontWeight: 800, color: '#34d399', marginTop: '2px' }}>
-              100% <span style={{ fontSize: '12px', color: '#64748b', fontWeight: 400 }}>Active</span>
+            <div style={{ fontSize: '11px', textTransform: 'uppercase', color: '#64748b', fontWeight: 700, letterSpacing: '0.5px' }}>
+              Tỷ Lệ Chặn Thành Công
+            </div>
+            <div style={{ fontSize: '24px', fontWeight: 800, color: '#059669', marginTop: '4px', letterSpacing: '-0.5px' }}>
+              100%{' '}
+              <span style={{ fontSize: '13px', color: '#059669', fontWeight: 600 }}>Active</span>
+            </div>
+            <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <i className="fa-solid fa-circle-check" style={{ fontSize: '10px', color: '#10b981' }}></i>
+              <span>SPOA In-Line Protection</span>
             </div>
           </div>
+          <span
+            style={{
+              fontSize: '10.5px',
+              fontWeight: 700,
+              padding: '2px 8px',
+              borderRadius: '6px',
+              background: '#ecfdf5',
+              color: '#047857',
+              border: '1px solid #a7f3d0',
+            }}
+          >
+            Zero Bypass
+          </span>
         </div>
       </div>
 
-      {/* 3. CHARTS ROW: Attack Vectors Donut + Hourly Threat Timeline */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '12px', marginBottom: '16px' }}>
-        <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: '10px', padding: '14px 18px' }}>
+      {/* 3. CHARTS ROW: Attack Vectors Donut + Hourly Threat Timeline (Light Theme) */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '12px', marginBottom: '14px' }}>
+        <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '10px', padding: '14px 18px', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-            <span style={{ fontSize: '13px', fontWeight: 700, color: '#e2e8f0', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{ fontSize: '13px', fontWeight: 700, color: '#0f172a', display: 'flex', alignItems: 'center', gap: '6px' }}>
               <i className="fa-solid fa-chart-pie" style={{ color: '#10b981' }}></i>
               Phân Loại Vector Tấn Công
             </span>
-            <span style={{ fontSize: '10.5px', background: 'rgba(16, 185, 129, 0.1)', color: '#34d399', padding: '2px 8px', borderRadius: '10px', fontWeight: 600 }}>
+            <span style={{ fontSize: '10.5px', background: '#dcfce7', color: '#15803d', padding: '2px 8px', borderRadius: '10px', fontWeight: 700, border: '1px solid #bbf7d0' }}>
               Live SQLite
             </span>
           </div>
-          <div style={{ height: '140px' }}>
+          <div style={{ height: '165px' }}>
             <Doughnut data={donutData} options={donutOptions} />
           </div>
         </div>
 
-        <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: '10px', padding: '14px 18px' }}>
+        <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '10px', padding: '14px 18px', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-            <span style={{ fontSize: '13px', fontWeight: 700, color: '#e2e8f0', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <i className="fa-solid fa-chart-column" style={{ color: '#38bdf8' }}></i>
+            <span style={{ fontSize: '13px', fontWeight: 700, color: '#0f172a', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <i className="fa-solid fa-chart-column" style={{ color: '#2563eb' }}></i>
               Tần Suất Chặn Theo Giờ
             </span>
-            <span style={{ fontSize: '10.5px', background: 'rgba(56, 189, 248, 0.1)', color: '#38bdf8', padding: '2px 8px', borderRadius: '10px', fontWeight: 600 }}>
+            <span style={{ fontSize: '10.5px', background: '#eff6ff', color: '#1d4ed8', padding: '2px 8px', borderRadius: '10px', fontWeight: 700, border: '1px solid #bfdbfe' }}>
               24 Giờ
             </span>
           </div>
-          <div style={{ height: '140px' }}>
+          <div style={{ height: '165px' }}>
             <Bar data={barData} options={barOptions} />
           </div>
         </div>
       </div>
 
-      {/* 4. MAIN SOC DATA PANEL: TOOLBAR + TABLE */}
-      <div className="panel-card" style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: '10px', padding: '16px 20px' }}>
+      {/* 4. MAIN SOC DATA PANEL: TOOLBAR + TABLE (Light Theme) */}
+      <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '10px', padding: '16px 20px', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
         {/* Modern Filter Toolbar */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px', paddingBottom: '14px', borderBottom: '1px solid #1e293b' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px', paddingBottom: '14px', borderBottom: '1px solid #e2e8f0' }}>
           {/* Time range icon buttons */}
           <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
             <button
@@ -779,10 +1019,12 @@ export default function InterceptionLogs({
               title="Toàn bộ thời gian"
               onClick={() => { setTimeFilter('all'); setCurrentPage(1); }}
               style={{
-                background: timeFilter === 'all' ? 'rgba(16, 185, 129, 0.2)' : 'rgba(30, 41, 59, 0.6)',
-                color: timeFilter === 'all' ? '#34d399' : '#94a3b8',
-                border: timeFilter === 'all' ? '1px solid #10b981' : '1px solid #334155',
-                padding: '4px 9px',
+                background: timeFilter === 'all' ? '#10b981' : '#f8fafc',
+                color: timeFilter === 'all' ? '#ffffff' : '#475569',
+                border: timeFilter === 'all' ? '1px solid #059669' : '1px solid #cbd5e1',
+                fontWeight: timeFilter === 'all' ? 700 : 500,
+                boxShadow: timeFilter === 'all' ? '0 1px 2px rgba(16,185,129,0.2)' : 'none',
+                padding: '5px 11px',
                 fontSize: '11px',
                 borderRadius: '6px',
                 cursor: 'pointer',
@@ -797,10 +1039,12 @@ export default function InterceptionLogs({
               title="Trong 24 giờ qua"
               onClick={() => { setTimeFilter('today'); setCurrentPage(1); }}
               style={{
-                background: timeFilter === 'today' ? 'rgba(16, 185, 129, 0.2)' : 'rgba(30, 41, 59, 0.6)',
-                color: timeFilter === 'today' ? '#34d399' : '#94a3b8',
-                border: timeFilter === 'today' ? '1px solid #10b981' : '1px solid #334155',
-                padding: '4px 9px',
+                background: timeFilter === 'today' ? '#10b981' : '#f8fafc',
+                color: timeFilter === 'today' ? '#ffffff' : '#475569',
+                border: timeFilter === 'today' ? '1px solid #059669' : '1px solid #cbd5e1',
+                fontWeight: timeFilter === 'today' ? 700 : 500,
+                boxShadow: timeFilter === 'today' ? '0 1px 2px rgba(16,185,129,0.2)' : 'none',
+                padding: '5px 11px',
                 fontSize: '11px',
                 borderRadius: '6px',
                 cursor: 'pointer',
@@ -815,10 +1059,12 @@ export default function InterceptionLogs({
               title="Hôm qua"
               onClick={() => { setTimeFilter('yesterday'); setCurrentPage(1); }}
               style={{
-                background: timeFilter === 'yesterday' ? 'rgba(16, 185, 129, 0.2)' : 'rgba(30, 41, 59, 0.6)',
-                color: timeFilter === 'yesterday' ? '#34d399' : '#94a3b8',
-                border: timeFilter === 'yesterday' ? '1px solid #10b981' : '1px solid #334155',
-                padding: '4px 9px',
+                background: timeFilter === 'yesterday' ? '#10b981' : '#f8fafc',
+                color: timeFilter === 'yesterday' ? '#ffffff' : '#475569',
+                border: timeFilter === 'yesterday' ? '1px solid #059669' : '1px solid #cbd5e1',
+                fontWeight: timeFilter === 'yesterday' ? 700 : 500,
+                boxShadow: timeFilter === 'yesterday' ? '0 1px 2px rgba(16,185,129,0.2)' : 'none',
+                padding: '5px 11px',
                 fontSize: '11px',
                 borderRadius: '6px',
                 cursor: 'pointer',
@@ -833,10 +1079,12 @@ export default function InterceptionLogs({
               title="7 ngày gần nhất"
               onClick={() => { setTimeFilter('7days'); setCurrentPage(1); }}
               style={{
-                background: timeFilter === '7days' ? 'rgba(16, 185, 129, 0.2)' : 'rgba(30, 41, 59, 0.6)',
-                color: timeFilter === '7days' ? '#34d399' : '#94a3b8',
-                border: timeFilter === '7days' ? '1px solid #10b981' : '1px solid #334155',
-                padding: '4px 9px',
+                background: timeFilter === '7days' ? '#10b981' : '#f8fafc',
+                color: timeFilter === '7days' ? '#ffffff' : '#475569',
+                border: timeFilter === '7days' ? '1px solid #059669' : '1px solid #cbd5e1',
+                fontWeight: timeFilter === '7days' ? 700 : 500,
+                boxShadow: timeFilter === '7days' ? '0 1px 2px rgba(16,185,129,0.2)' : 'none',
+                padding: '5px 11px',
                 fontSize: '11px',
                 borderRadius: '6px',
                 cursor: 'pointer',
@@ -850,7 +1098,7 @@ export default function InterceptionLogs({
           <div style={{ position: 'relative', flex: 1, minWidth: '220px', maxWidth: '340px' }}>
             <i
               className="fa-solid fa-magnifying-glass"
-              style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#64748b', fontSize: '11px' }}
+              style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8', fontSize: '11px' }}
             ></i>
             <input
               type="text"
@@ -863,10 +1111,12 @@ export default function InterceptionLogs({
                 paddingRight: '26px',
                 height: '32px',
                 borderRadius: '6px',
-                border: '1px solid #334155',
-                background: '#1e293b',
-                color: '#f8fafc',
+                border: '1px solid #cbd5e1',
+                background: '#ffffff',
+                color: '#0f172a',
                 fontSize: '11.5px',
+                outline: 'none',
+                boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.03)',
               }}
             />
             {searchQuery && (
@@ -895,7 +1145,7 @@ export default function InterceptionLogs({
             <select
               value={typeFilter}
               onChange={(e) => { setTypeFilter(e.target.value); setCurrentPage(1); }}
-              style={{ height: '32px', background: '#1e293b', color: '#cbd5e1', border: '1px solid #334155', borderRadius: '6px', fontSize: '11px', padding: '0 8px' }}
+              style={{ height: '32px', background: '#ffffff', color: '#334155', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '11px', padding: '0 8px', fontWeight: 500 }}
             >
               <option value="">🎯 Tất cả Vector</option>
               <option value="SQL Injection">💉 SQL Injection (SQLi)</option>
@@ -909,7 +1159,7 @@ export default function InterceptionLogs({
             <select
               value={severityFilter}
               onChange={(e) => { setSeverityFilter(e.target.value); setCurrentPage(1); }}
-              style={{ height: '32px', background: '#1e293b', color: '#cbd5e1', border: '1px solid #334155', borderRadius: '6px', fontSize: '11px', padding: '0 8px' }}
+              style={{ height: '32px', background: '#ffffff', color: '#334155', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '11px', padding: '0 8px', fontWeight: 500 }}
             >
               <option value="">⚠️ Mức Nguy Hiểm</option>
               <option value="CRITICAL">🔴 Critical (Khẩn cấp)</option>
@@ -921,7 +1171,7 @@ export default function InterceptionLogs({
             <select
               value={methodFilter}
               onChange={(e) => { setMethodFilter(e.target.value); setCurrentPage(1); }}
-              style={{ height: '32px', background: '#1e293b', color: '#cbd5e1', border: '1px solid #334155', borderRadius: '6px', fontSize: '11px', padding: '0 8px' }}
+              style={{ height: '32px', background: '#ffffff', color: '#334155', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '11px', padding: '0 8px', fontWeight: 500 }}
             >
               <option value="">Method</option>
               <option value="GET">GET</option>
@@ -933,7 +1183,7 @@ export default function InterceptionLogs({
             <select
               value={pageSize}
               onChange={(e) => { setPageSize(Number(e.target.value)); setCurrentPage(1); }}
-              style={{ height: '32px', background: '#1e293b', color: '#cbd5e1', border: '1px solid #334155', borderRadius: '6px', fontSize: '11px', padding: '0 6px' }}
+              style={{ height: '32px', background: '#ffffff', color: '#334155', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '11px', padding: '0 6px', fontWeight: 500 }}
             >
               <option value={15}>15 dòng</option>
               <option value={30}>30 dòng</option>
@@ -955,12 +1205,13 @@ export default function InterceptionLogs({
                 title="Đặt lại toàn bộ bộ lọc"
                 style={{
                   height: '32px',
-                  background: 'rgba(239, 68, 68, 0.15)',
-                  color: '#f87171',
-                  border: '1px solid rgba(239, 68, 68, 0.3)',
+                  background: '#fef2f2',
+                  color: '#dc2626',
+                  border: '1px solid #fecaca',
                   borderRadius: '6px',
                   padding: '0 10px',
                   fontSize: '11px',
+                  fontWeight: 600,
                   cursor: 'pointer',
                   display: 'flex',
                   alignItems: 'center',
@@ -977,8 +1228,8 @@ export default function InterceptionLogs({
         {selectedLogIds.size > 0 && (
           <div
             style={{
-              background: 'linear-gradient(90deg, #1e293b 0%, #0f172a 100%)',
-              border: '1px solid #38bdf8',
+              background: '#f0fdf4',
+              border: '1px solid #86efac',
               borderRadius: '8px',
               padding: '8px 14px',
               marginTop: '12px',
@@ -987,14 +1238,14 @@ export default function InterceptionLogs({
               justifyContent: 'space-between',
               gap: '12px',
               flexWrap: 'wrap',
-              animation: 'fadeInPanel 0.2s ease',
+              boxShadow: '0 2px 4px rgba(0,0,0,0.03)',
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <span
                 style={{
-                  background: '#38bdf8',
-                  color: '#0f172a',
+                  background: '#16a34a',
+                  color: '#ffffff',
                   fontWeight: 800,
                   fontSize: '11px',
                   padding: '2px 8px',
@@ -1003,7 +1254,7 @@ export default function InterceptionLogs({
               >
                 {selectedLogIds.size}
               </span>
-              <span style={{ fontSize: '12px', fontWeight: 600, color: '#f8fafc' }}>
+              <span style={{ fontSize: '12px', fontWeight: 700, color: '#166534' }}>
                 Bản ghi được chọn thao tác hàng loạt
               </span>
             </div>
@@ -1018,9 +1269,9 @@ export default function InterceptionLogs({
                   fontSize: '11px',
                   fontWeight: 700,
                   borderRadius: '6px',
-                  border: '1px solid rgba(245, 158, 11, 0.4)',
-                  background: 'rgba(245, 158, 11, 0.15)',
-                  color: '#fbbf24',
+                  border: '1px solid #fcd34d',
+                  background: '#fffbeb',
+                  color: '#d97706',
                   cursor: 'pointer',
                   display: 'inline-flex',
                   alignItems: 'center',
@@ -1039,9 +1290,9 @@ export default function InterceptionLogs({
                   fontSize: '11px',
                   fontWeight: 700,
                   borderRadius: '6px',
-                  border: '1px solid rgba(239, 68, 68, 0.4)',
-                  background: 'rgba(239, 68, 68, 0.15)',
-                  color: '#f87171',
+                  border: '1px solid #fca5a5',
+                  background: '#fef2f2',
+                  color: '#dc2626',
                   cursor: 'pointer',
                   display: 'inline-flex',
                   alignItems: 'center',
@@ -1060,16 +1311,16 @@ export default function InterceptionLogs({
                   fontSize: '11px',
                   fontWeight: 700,
                   borderRadius: '6px',
-                  border: '1px solid rgba(16, 185, 129, 0.4)',
-                  background: 'rgba(16, 185, 129, 0.15)',
-                  color: '#34d399',
+                  border: '1px solid #bbf7d0',
+                  background: '#f0fdf4',
+                  color: '#16a34a',
                   cursor: 'pointer',
                   display: 'inline-flex',
                   alignItems: 'center',
                   gap: '5px',
                 }}
               >
-                <i className="fa-solid fa-shield-check"></i> Whitelist
+                <i className="fa-solid fa-circle-check"></i> Whitelist
               </button>
 
               <button
@@ -1079,9 +1330,9 @@ export default function InterceptionLogs({
                   padding: '5px 8px',
                   fontSize: '11px',
                   borderRadius: '6px',
-                  border: '1px solid #475569',
-                  background: 'transparent',
-                  color: '#94a3b8',
+                  border: '1px solid #cbd5e1',
+                  background: '#ffffff',
+                  color: '#64748b',
                   cursor: 'pointer',
                 }}
               >
@@ -1095,8 +1346,8 @@ export default function InterceptionLogs({
         <div className="table-container" style={{ marginTop: '14px', overflowX: 'auto' }}>
           <table className="aawaf-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
-              <tr style={{ background: '#1e293b', borderBottom: '1px solid #334155' }}>
-                <th style={{ width: '38px', textAlign: 'center', padding: '10px 8px' }}>
+              <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
+                <th style={{ width: '38px', textAlign: 'center', padding: '11px 8px' }}>
                   <input
                     type="checkbox"
                     checked={paginatedLogs.length > 0 && selectedLogIds.size === paginatedLogs.length}
@@ -1104,29 +1355,29 @@ export default function InterceptionLogs({
                     style={{ cursor: 'pointer' }}
                   />
                 </th>
-                <th style={{ width: '60px', padding: '10px 8px', color: '#94a3b8', fontSize: '11px' }}>#ID</th>
-                <th style={{ width: '130px', padding: '10px 8px', color: '#94a3b8', fontSize: '11px' }}>
+                <th style={{ width: '60px', padding: '11px 8px', color: '#475569', fontSize: '11.5px', fontWeight: 700 }}>#ID</th>
+                <th style={{ width: '130px', padding: '11px 8px', color: '#475569', fontSize: '11.5px', fontWeight: 700 }}>
                   <i className="fa-solid fa-clock" style={{ marginRight: '5px' }}></i> Thời Gian
                 </th>
-                <th style={{ width: '180px', padding: '10px 8px', color: '#94a3b8', fontSize: '11px' }}>
+                <th style={{ width: '180px', padding: '11px 8px', color: '#475569', fontSize: '11.5px', fontWeight: 700 }}>
                   <i className="fa-solid fa-network-wired" style={{ marginRight: '5px' }}></i> Kẻ Tấn Công (IP)
                 </th>
-                <th style={{ width: '150px', padding: '10px 8px', color: '#94a3b8', fontSize: '11px' }}>
+                <th style={{ width: '150px', padding: '11px 8px', color: '#475569', fontSize: '11.5px', fontWeight: 700 }}>
                   <i className="fa-solid fa-globe" style={{ marginRight: '5px' }}></i> Website Mục Tiêu
                 </th>
-                <th style={{ width: '150px', padding: '10px 8px', color: '#94a3b8', fontSize: '11px' }}>
+                <th style={{ width: '150px', padding: '11px 8px', color: '#475569', fontSize: '11.5px', fontWeight: 700 }}>
                   <i className="fa-solid fa-shield-halved" style={{ marginRight: '5px' }}></i> Mức Độ / Vector
                 </th>
-                <th style={{ padding: '10px 8px', color: '#94a3b8', fontSize: '11px' }}>
+                <th style={{ width: '210px', padding: '11px 8px', color: '#475569', fontSize: '11.5px', fontWeight: 700 }}>
                   <i className="fa-solid fa-link" style={{ marginRight: '5px' }}></i> Mục Tiêu (URI)
                 </th>
-                <th style={{ width: '120px', padding: '10px 8px', color: '#94a3b8', fontSize: '11px' }}>
+                <th style={{ width: '120px', padding: '11px 8px', color: '#475569', fontSize: '11.5px', fontWeight: 700 }}>
                   <i className="fa-solid fa-tag" style={{ marginRight: '5px' }}></i> CRS Rule
                 </th>
-                <th style={{ width: '80px', textAlign: 'center', padding: '10px 8px', color: '#94a3b8', fontSize: '11px' }}>
+                <th style={{ width: '80px', textAlign: 'center', padding: '11px 8px', color: '#475569', fontSize: '11.5px', fontWeight: 700 }}>
                   Trạng Thái
                 </th>
-                <th style={{ width: '150px', textAlign: 'center', padding: '10px 8px', color: '#94a3b8', fontSize: '11px' }}>
+                <th style={{ width: '150px', textAlign: 'center', padding: '11px 8px', color: '#475569', fontSize: '11.5px', fontWeight: 700 }}>
                   <i className="fa-solid fa-bolt" style={{ marginRight: '5px' }}></i> Thao Tác
                 </th>
               </tr>
@@ -1135,7 +1386,7 @@ export default function InterceptionLogs({
               {paginatedLogs.length === 0 ? (
                 <tr>
                   <td colSpan="10" style={{ textAlign: 'center', padding: '40px 10px', color: '#64748b' }}>
-                    <i className="fa-solid fa-shield-check" style={{ fontSize: '32px', color: '#10b981', display: 'block', marginBottom: '8px' }}></i>
+                    <i className="fa-solid fa-shield-halved" style={{ fontSize: '32px', color: '#10b981', display: 'block', marginBottom: '8px' }}></i>
                     {searchQuery
                       ? `Không có sự kiện nào khớp với từ khóa "${searchQuery}".`
                       : 'Hiện không có bản ghi vi phạm nào trong khoảng thời gian đã chọn.'}
@@ -1155,8 +1406,8 @@ export default function InterceptionLogs({
                     <tr
                       key={logKey}
                       style={{
-                        background: isSelected ? 'rgba(56, 189, 248, 0.08)' : 'transparent',
-                        borderBottom: '1px solid #1e293b',
+                        background: isSelected ? '#f0fdf4' : '#ffffff',
+                        borderBottom: '1px solid #f1f5f9',
                         transition: 'background 0.15s',
                       }}
                     >
@@ -1171,15 +1422,23 @@ export default function InterceptionLogs({
                       </td>
 
                       {/* ID */}
-                      <td style={{ padding: '10px 8px', fontFamily: 'var(--font-mono, monospace)', fontSize: '11px', color: '#64748b' }}>
+                      <td style={{ padding: '10px 8px', fontFamily: 'var(--font-mono, monospace)', fontSize: '11px', color: '#64748b', fontWeight: 600 }}>
                         #{log.id || totalRecords - (startIndex + index)}
                       </td>
 
                       {/* Time */}
                       <td style={{ padding: '10px 8px', whiteSpace: 'nowrap' }}>
-                        <div style={{ color: '#cbd5e1', fontSize: '11px', fontWeight: 600 }}>{timeInfo.relative}</div>
-                        <div style={{ color: '#64748b', fontSize: '10px', fontFamily: 'var(--font-mono, monospace)' }} title={timeInfo.full}>
-                          {timeInfo.full.slice(11)}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                          <span style={{ color: '#0f172a', fontSize: '11px', fontWeight: 700 }}>
+                            {timeInfo.full.slice(0, 10)}
+                          </span>
+                          <span style={{ color: '#2563eb', fontSize: '10.5px', fontFamily: 'var(--font-mono, monospace)', fontWeight: 600 }}>
+                            {timeInfo.full.slice(11, 19)}
+                          </span>
+                        </div>
+                        <div style={{ color: '#64748b', fontSize: '10px', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <i className="fa-regular fa-clock" style={{ fontSize: '9px' }}></i>
+                          {timeInfo.relative}
                         </div>
                       </td>
 
@@ -1194,8 +1453,8 @@ export default function InterceptionLogs({
                               <code
                                 style={{
                                   fontSize: '12px',
-                                  fontWeight: 700,
-                                  color: '#38bdf8',
+                                  fontWeight: 800,
+                                  color: '#0284c7',
                                   fontFamily: 'var(--font-mono, monospace)',
                                 }}
                               >
@@ -1208,7 +1467,7 @@ export default function InterceptionLogs({
                                 style={{
                                   background: 'none',
                                   border: 'none',
-                                  color: copiedIP === log.client_ip ? '#10b981' : '#64748b',
+                                  color: copiedIP === log.client_ip ? '#10b981' : '#94a3b8',
                                   cursor: 'pointer',
                                   padding: '1px 3px',
                                   fontSize: '10px',
@@ -1217,7 +1476,7 @@ export default function InterceptionLogs({
                                 <i className={`fa-solid ${copiedIP === log.client_ip ? 'fa-check' : 'fa-copy'}`}></i>
                               </button>
                             </div>
-                            <div style={{ fontSize: '10px', color: '#94a3b8', whiteSpace: 'nowrap' }}>
+                            <div style={{ fontSize: '10.5px', color: '#64748b', whiteSpace: 'nowrap', fontWeight: 500 }}>
                               {geo.country} {geo.city ? `· ${geo.city}` : ''}
                             </div>
                           </div>
@@ -1229,8 +1488,8 @@ export default function InterceptionLogs({
                         <span
                           style={{
                             fontSize: '11.5px',
-                            fontWeight: 600,
-                            color: log.target_host ? '#f0abfc' : '#475569',
+                            fontWeight: 700,
+                            color: log.target_host ? '#7c3aed' : '#94a3b8',
                             fontFamily: 'var(--font-mono, monospace)',
                           }}
                           title={log.target_host || 'Chưa xác định'}
@@ -1260,14 +1519,14 @@ export default function InterceptionLogs({
                             <i className={sev.icon} style={{ fontSize: '9px' }}></i>
                             {sev.label}
                           </span>
-                          <span style={{ fontSize: '11px', color: '#e2e8f0', fontWeight: 600 }}>
+                          <span style={{ fontSize: '11px', color: '#0f172a', fontWeight: 600 }}>
                             {log.attack_type || 'General Threat'}
                           </span>
                         </div>
                       </td>
 
                       {/* Request URI */}
-                      <td style={{ padding: '10px 8px', maxWidth: '300px' }}>
+                      <td style={{ padding: '10px 8px', width: '210px', maxWidth: '210px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                           <span
                             style={{
@@ -1277,30 +1536,31 @@ export default function InterceptionLogs({
                               borderRadius: '4px',
                               background:
                                 log.method === 'POST'
-                                  ? 'rgba(249, 115, 22, 0.2)'
+                                  ? '#ffedd5'
                                   : log.method === 'GET'
-                                  ? 'rgba(56, 189, 248, 0.2)'
-                                  : 'rgba(148, 163, 184, 0.2)',
+                                  ? '#e0f2fe'
+                                  : '#f1f5f9',
                               color:
                                 log.method === 'POST'
-                                  ? '#fb923c'
+                                  ? '#c2410c'
                                   : log.method === 'GET'
-                                  ? '#38bdf8'
-                                  : '#cbd5e1',
-                              border: '1px solid rgba(255,255,255,0.06)',
+                                  ? '#0284c7'
+                                  : '#475569',
+                              border: '1px solid rgba(0,0,0,0.06)',
+                              flexShrink: 0,
                             }}
                           >
                             {log.method}
                           </span>
                           <span
                             style={{
-                              fontSize: '11.5px',
+                              fontSize: '11px',
                               fontFamily: 'var(--font-mono, monospace)',
-                              color: '#cbd5e1',
+                              color: '#334155',
                               overflow: 'hidden',
                               textOverflow: 'ellipsis',
                               whiteSpace: 'nowrap',
-                              maxWidth: '250px',
+                              maxWidth: '150px',
                             }}
                             title={decodedUri}
                           >
@@ -1316,11 +1576,11 @@ export default function InterceptionLogs({
                             fontSize: '11px',
                             fontFamily: 'var(--font-mono, monospace)',
                             fontWeight: 700,
-                            color: '#c084fc',
-                            background: 'rgba(168, 85, 247, 0.12)',
+                            color: '#7e22ce',
+                            background: '#f3e8ff',
                             padding: '2px 6px',
                             borderRadius: '4px',
-                            border: '1px solid rgba(168, 85, 247, 0.25)',
+                            border: '1px solid #d8b4fe',
                           }}
                           title={log.rule_msg || `Rule #${log.rule_id}`}
                         >
@@ -1334,11 +1594,11 @@ export default function InterceptionLogs({
                           style={{
                             fontSize: '10.5px',
                             fontWeight: 800,
-                            padding: '2px 6px',
+                            padding: '2px 7px',
                             borderRadius: '10px',
-                            background: 'rgba(239, 68, 68, 0.15)',
-                            color: '#f87171',
-                            border: '1px solid rgba(239, 68, 68, 0.3)',
+                            background: '#fee2e2',
+                            color: '#dc2626',
+                            border: '1px solid #fca5a5',
                             display: 'inline-flex',
                             alignItems: 'center',
                             gap: '4px',
@@ -1360,9 +1620,9 @@ export default function InterceptionLogs({
                               width: '28px',
                               height: '28px',
                               borderRadius: '6px',
-                              border: '1px solid rgba(56, 189, 248, 0.3)',
-                              background: 'rgba(56, 189, 248, 0.12)',
-                              color: '#38bdf8',
+                              border: '1px solid #bae6fd',
+                              background: '#f0f9ff',
+                              color: '#0284c7',
                               fontSize: '11.5px',
                               cursor: 'pointer',
                               display: 'flex',
@@ -1383,9 +1643,9 @@ export default function InterceptionLogs({
                                 width: '28px',
                                 height: '28px',
                                 borderRadius: '6px',
-                                border: '1px solid rgba(239, 68, 68, 0.35)',
-                                background: isBanMenuOpen ? '#ef4444' : 'rgba(239, 68, 68, 0.12)',
-                                color: isBanMenuOpen ? '#ffffff' : '#f87171',
+                                border: '1px solid #fecaca',
+                                background: isBanMenuOpen ? '#ef4444' : '#fef2f2',
+                                color: isBanMenuOpen ? '#ffffff' : '#dc2626',
                                 fontSize: '11px',
                                 cursor: 'pointer',
                                 display: 'flex',
@@ -1404,16 +1664,16 @@ export default function InterceptionLogs({
                                   right: 0,
                                   top: '32px',
                                   zIndex: 999,
-                                  background: '#0f172a',
-                                  border: '1px solid #334155',
+                                  background: '#ffffff',
+                                  border: '1px solid #cbd5e1',
                                   borderRadius: '8px',
-                                  boxShadow: '0 10px 25px rgba(0,0,0,0.5)',
+                                  boxShadow: '0 10px 25px rgba(0,0,0,0.12)',
                                   width: '160px',
                                   padding: '4px',
                                   textAlign: 'left',
                                 }}
                               >
-                                <div style={{ fontSize: '10px', color: '#94a3b8', padding: '4px 8px', fontWeight: 700, textTransform: 'uppercase' }}>
+                                <div style={{ fontSize: '10px', color: '#64748b', padding: '4px 8px', fontWeight: 700, textTransform: 'uppercase' }}>
                                   Thời hạn cấm IP:
                                 </div>
                                 <button
@@ -1429,7 +1689,8 @@ export default function InterceptionLogs({
                                     fontSize: '11px',
                                     background: 'transparent',
                                     border: 'none',
-                                    color: '#fbbf24',
+                                    color: '#d97706',
+                                    fontWeight: 600,
                                     cursor: 'pointer',
                                     borderRadius: '4px',
                                     display: 'flex',
@@ -1452,7 +1713,7 @@ export default function InterceptionLogs({
                                     fontSize: '11px',
                                     background: 'transparent',
                                     border: 'none',
-                                    color: '#e2e8f0',
+                                    color: '#334155',
                                     cursor: 'pointer',
                                     borderRadius: '4px',
                                     display: 'flex',
@@ -1475,7 +1736,7 @@ export default function InterceptionLogs({
                                     fontSize: '11px',
                                     background: 'transparent',
                                     border: 'none',
-                                    color: '#e2e8f0',
+                                    color: '#334155',
                                     cursor: 'pointer',
                                     borderRadius: '4px',
                                     display: 'flex',
@@ -1496,9 +1757,9 @@ export default function InterceptionLogs({
                                     textAlign: 'left',
                                     padding: '5px 8px',
                                     fontSize: '11px',
-                                    background: 'transparent',
+                                    background: '#fef2f2',
                                     border: 'none',
-                                    color: '#ef4444',
+                                    color: '#dc2626',
                                     fontWeight: 700,
                                     cursor: 'pointer',
                                     borderRadius: '4px',
@@ -1524,17 +1785,18 @@ export default function InterceptionLogs({
                               width: '28px',
                               height: '28px',
                               borderRadius: '6px',
-                              border: '1px solid rgba(16, 185, 129, 0.3)',
-                              background: 'rgba(16, 185, 129, 0.12)',
-                              color: '#34d399',
+                              border: '1px solid #bbf7d0',
+                              background: '#f0fdf4',
+                              color: '#16a34a',
                               fontSize: '11px',
                               cursor: 'pointer',
                               display: 'flex',
                               alignItems: 'center',
                               justifyContent: 'center',
+                              transition: 'all 0.15s',
                             }}
                           >
-                            <i className="fa-solid fa-shield-check"></i>
+                            <i className="fa-solid fa-circle-check"></i>
                           </button>
 
                           {/* cURL Copy Button */}
@@ -1546,14 +1808,15 @@ export default function InterceptionLogs({
                               width: '28px',
                               height: '28px',
                               borderRadius: '6px',
-                              border: '1px solid #334155',
-                              background: 'rgba(30, 41, 59, 0.6)',
-                              color: '#94a3b8',
+                              border: '1px solid #e2e8f0',
+                              background: '#f8fafc',
+                              color: '#475569',
                               fontSize: '11px',
                               cursor: 'pointer',
                               display: 'flex',
                               alignItems: 'center',
                               justifyContent: 'center',
+                              transition: 'all 0.15s',
                             }}
                           >
                             <i className="fa-solid fa-terminal"></i>
@@ -1569,9 +1832,9 @@ export default function InterceptionLogs({
         </div>
 
         {/* 6. PAGINATION CONTROLS */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '16px', paddingTop: '12px', borderTop: '1px solid #1e293b', fontSize: '12px', color: '#94a3b8' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '16px', paddingTop: '12px', borderTop: '1px solid #e2e8f0', fontSize: '12px', color: '#64748b' }}>
           <div>
-            Hiển thị <strong>{totalRecords === 0 ? 0 : startIndex + 1} - {Math.min(startIndex + pageSize, totalRecords)}</strong> trong tổng số <strong>{totalRecords}</strong> bản ghi
+            Hiển thị <strong style={{ color: '#0f172a' }}>{totalRecords === 0 ? 0 : startIndex + 1} - {Math.min(startIndex + pageSize, totalRecords)}</strong> trong tổng số <strong style={{ color: '#0f172a' }}>{totalRecords}</strong> bản ghi
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
@@ -1582,9 +1845,9 @@ export default function InterceptionLogs({
               style={{
                 padding: '4px 8px',
                 borderRadius: '4px',
-                border: '1px solid #334155',
-                background: '#1e293b',
-                color: safeCurrentPage === 1 ? '#475569' : '#cbd5e1',
+                border: '1px solid #cbd5e1',
+                background: '#ffffff',
+                color: safeCurrentPage === 1 ? '#94a3b8' : '#334155',
                 cursor: safeCurrentPage === 1 ? 'not-allowed' : 'pointer',
               }}
             >
@@ -1597,9 +1860,9 @@ export default function InterceptionLogs({
               style={{
                 padding: '4px 8px',
                 borderRadius: '4px',
-                border: '1px solid #334155',
-                background: '#1e293b',
-                color: safeCurrentPage === 1 ? '#475569' : '#cbd5e1',
+                border: '1px solid #cbd5e1',
+                background: '#ffffff',
+                color: safeCurrentPage === 1 ? '#94a3b8' : '#334155',
                 cursor: safeCurrentPage === 1 ? 'not-allowed' : 'pointer',
               }}
             >
@@ -1624,9 +1887,9 @@ export default function InterceptionLogs({
                     minWidth: '28px',
                     height: '28px',
                     borderRadius: '4px',
-                    border: safeCurrentPage === pageNum ? '1px solid #10b981' : '1px solid #334155',
-                    background: safeCurrentPage === pageNum ? 'rgba(16, 185, 129, 0.2)' : '#1e293b',
-                    color: safeCurrentPage === pageNum ? '#34d399' : '#cbd5e1',
+                    border: safeCurrentPage === pageNum ? '1px solid #059669' : '1px solid #cbd5e1',
+                    background: safeCurrentPage === pageNum ? '#10b981' : '#ffffff',
+                    color: safeCurrentPage === pageNum ? '#ffffff' : '#334155',
                     fontWeight: safeCurrentPage === pageNum ? 800 : 500,
                     cursor: 'pointer',
                     fontSize: '11.5px',
@@ -1644,9 +1907,9 @@ export default function InterceptionLogs({
               style={{
                 padding: '4px 8px',
                 borderRadius: '4px',
-                border: '1px solid #334155',
-                background: '#1e293b',
-                color: safeCurrentPage === totalPages ? '#475569' : '#cbd5e1',
+                border: '1px solid #cbd5e1',
+                background: '#ffffff',
+                color: safeCurrentPage === totalPages ? '#94a3b8' : '#334155',
                 cursor: safeCurrentPage === totalPages ? 'not-allowed' : 'pointer',
               }}
             >
@@ -1659,9 +1922,9 @@ export default function InterceptionLogs({
               style={{
                 padding: '4px 8px',
                 borderRadius: '4px',
-                border: '1px solid #334155',
-                background: '#1e293b',
-                color: safeCurrentPage === totalPages ? '#475569' : '#cbd5e1',
+                border: '1px solid #cbd5e1',
+                background: '#ffffff',
+                color: safeCurrentPage === totalPages ? '#94a3b8' : '#334155',
                 cursor: safeCurrentPage === totalPages ? 'not-allowed' : 'pointer',
               }}
             >
@@ -1679,8 +1942,8 @@ export default function InterceptionLogs({
           style={{
             position: 'fixed',
             inset: 0,
-            background: 'rgba(0, 0, 0, 0.75)',
-            backdropFilter: 'blur(5px)',
+            background: 'rgba(15, 23, 42, 0.65)',
+            backdropFilter: 'blur(4px)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -1691,12 +1954,12 @@ export default function InterceptionLogs({
           <div
             onClick={(e) => e.stopPropagation()}
             style={{
-              background: '#0f172a',
-              border: '1px solid #334155',
+              background: '#ffffff',
+              border: '1px solid #e2e8f0',
               borderRadius: '12px',
               maxWidth: '820px',
               width: '100%',
-              boxShadow: '0 20px 40px rgba(0,0,0,0.6)',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
               overflow: 'hidden',
               animation: 'fadeInPanel 0.2s ease',
             }}
@@ -1705,7 +1968,8 @@ export default function InterceptionLogs({
             <div
               style={{
                 padding: '16px 20px',
-                borderBottom: '1px solid #1e293b',
+                borderBottom: '1px solid #e2e8f0',
+                background: '#f8fafc',
                 display: 'flex',
                 justifyContent: 'space-between',
                 alignItems: 'center',
@@ -1717,22 +1981,22 @@ export default function InterceptionLogs({
                     width: '36px',
                     height: '36px',
                     borderRadius: '8px',
-                    background: 'rgba(239, 68, 68, 0.15)',
+                    background: '#fee2e2',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    color: '#f87171',
+                    color: '#dc2626',
                     fontSize: '16px',
                   }}
                 >
                   <i className="fa-solid fa-fingerprint"></i>
                 </div>
                 <div>
-                  <h4 style={{ margin: 0, fontSize: '15px', color: '#f8fafc', fontWeight: 800 }}>
+                  <h4 style={{ margin: 0, fontSize: '15px', color: '#0f172a', fontWeight: 800 }}>
                     Threat Forensic Inspection · #{selectedLogModal.id}
                   </h4>
-                  <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '2px' }}>
-                    Txn ID: <code style={{ color: '#38bdf8' }}>{selectedLogModal.txn_id || 'N/A'}</code>
+                  <div style={{ fontSize: '11px', color: '#64748b', marginTop: '2px' }}>
+                    Txn ID: <code style={{ color: '#0284c7', fontWeight: 700 }}>{selectedLogModal.txn_id || 'N/A'}</code>
                   </div>
                 </div>
               </div>
@@ -1742,7 +2006,7 @@ export default function InterceptionLogs({
                 style={{
                   background: 'none',
                   border: 'none',
-                  color: '#94a3b8',
+                  color: '#64748b',
                   fontSize: '16px',
                   cursor: 'pointer',
                   padding: '4px',
@@ -1753,7 +2017,7 @@ export default function InterceptionLogs({
             </div>
 
             {/* Modal Tabs Header */}
-            <div style={{ padding: '0 20px', borderBottom: '1px solid #1e293b', display: 'flex', gap: '16px', background: '#090d16' }}>
+            <div style={{ padding: '0 20px', borderBottom: '1px solid #e2e8f0', display: 'flex', gap: '16px', background: '#ffffff' }}>
               <button
                 type="button"
                 onClick={() => setActiveModalTab('overview')}
@@ -1762,7 +2026,7 @@ export default function InterceptionLogs({
                   border: 'none',
                   background: 'none',
                   borderBottom: activeModalTab === 'overview' ? '2px solid #10b981' : '2px solid transparent',
-                  color: activeModalTab === 'overview' ? '#34d399' : '#94a3b8',
+                  color: activeModalTab === 'overview' ? '#059669' : '#64748b',
                   fontWeight: 700,
                   fontSize: '12.5px',
                   cursor: 'pointer',
@@ -1782,7 +2046,7 @@ export default function InterceptionLogs({
                   border: 'none',
                   background: 'none',
                   borderBottom: activeModalTab === 'payload' ? '2px solid #10b981' : '2px solid transparent',
-                  color: activeModalTab === 'payload' ? '#34d399' : '#94a3b8',
+                  color: activeModalTab === 'payload' ? '#059669' : '#64748b',
                   fontWeight: 700,
                   fontSize: '12.5px',
                   cursor: 'pointer',
@@ -1802,7 +2066,7 @@ export default function InterceptionLogs({
                   border: 'none',
                   background: 'none',
                   borderBottom: activeModalTab === 'fingerprint' ? '2px solid #10b981' : '2px solid transparent',
-                  color: activeModalTab === 'fingerprint' ? '#34d399' : '#94a3b8',
+                  color: activeModalTab === 'fingerprint' ? '#059669' : '#64748b',
                   fontWeight: 700,
                   fontSize: '12.5px',
                   cursor: 'pointer',
@@ -1822,7 +2086,7 @@ export default function InterceptionLogs({
                   border: 'none',
                   background: 'none',
                   borderBottom: activeModalTab === 'curl' ? '2px solid #10b981' : '2px solid transparent',
-                  color: activeModalTab === 'curl' ? '#34d399' : '#94a3b8',
+                  color: activeModalTab === 'curl' ? '#059669' : '#64748b',
                   fontWeight: 700,
                   fontSize: '12.5px',
                   cursor: 'pointer',
@@ -1839,46 +2103,63 @@ export default function InterceptionLogs({
             <div style={{ padding: '20px', maxHeight: '60vh', overflowY: 'auto' }}>
               {activeModalTab === 'overview' && (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px' }}>
-                  <div style={{ background: '#1e293b', padding: '12px 14px', borderRadius: '8px' }}>
-                    <div style={{ fontSize: '11px', color: '#94a3b8' }}>Địa chỉ IP kẻ tấn công</div>
-                    <div style={{ fontSize: '15px', fontWeight: 800, color: '#38bdf8', fontFamily: 'var(--font-mono, monospace)', marginTop: '4px' }}>
-                      {selectedLogModal.client_ip}
+                  <div style={{ background: '#f8fafc', padding: '12px 14px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                    <div style={{ fontSize: '11px', color: '#64748b' }}>Địa chỉ IP kẻ tấn công</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
+                      <span style={{ fontSize: '15px', fontWeight: 800, color: '#0284c7', fontFamily: 'var(--font-mono, monospace)' }}>
+                        {selectedLogModal.client_ip}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleCopyIP(selectedLogModal.client_ip)}
+                        title={copiedIP === selectedLogModal.client_ip ? 'Đã sao chép!' : 'Sao chép IP'}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          color: copiedIP === selectedLogModal.client_ip ? '#10b981' : '#64748b',
+                          cursor: 'pointer',
+                          padding: '2px 4px',
+                          fontSize: '12px',
+                        }}
+                      >
+                        <i className={`fa-solid ${copiedIP === selectedLogModal.client_ip ? 'fa-check' : 'fa-copy'}`}></i>
+                      </button>
                     </div>
                   </div>
 
-                  <div style={{ background: '#1e293b', padding: '12px 14px', borderRadius: '8px' }}>
-                    <div style={{ fontSize: '11px', color: '#94a3b8' }}>Quốc gia & Khu vực</div>
-                    <div style={{ fontSize: '14px', fontWeight: 700, color: '#f8fafc', marginTop: '4px' }}>
+                  <div style={{ background: '#f8fafc', padding: '12px 14px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                    <div style={{ fontSize: '11px', color: '#64748b' }}>Quốc gia & Khu vực</div>
+                    <div style={{ fontSize: '14px', fontWeight: 700, color: '#0f172a', marginTop: '4px' }}>
                       {getGeoInfo(selectedLogModal.client_ip, selectedLogModal).flag}{' '}
                       {getGeoInfo(selectedLogModal.client_ip, selectedLogModal).country}{' '}
                       ({getGeoInfo(selectedLogModal.client_ip, selectedLogModal).city || 'Network'})
                     </div>
                   </div>
 
-                  <div style={{ background: '#1e293b', padding: '12px 14px', borderRadius: '8px' }}>
-                    <div style={{ fontSize: '11px', color: '#94a3b8' }}>Vector Tấn công</div>
-                    <div style={{ fontSize: '14px', fontWeight: 800, color: '#f87171', marginTop: '4px' }}>
+                  <div style={{ background: '#f8fafc', padding: '12px 14px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                    <div style={{ fontSize: '11px', color: '#64748b' }}>Vector Tấn công</div>
+                    <div style={{ fontSize: '14px', fontWeight: 800, color: '#dc2626', marginTop: '4px' }}>
                       {selectedLogModal.attack_type}
                     </div>
                   </div>
 
-                  <div style={{ background: '#1e293b', padding: '12px 14px', borderRadius: '8px' }}>
-                    <div style={{ fontSize: '11px', color: '#94a3b8' }}>Quyết định xử lý của WAF</div>
-                    <div style={{ fontSize: '14px', fontWeight: 700, color: '#34d399', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <div style={{ background: '#f8fafc', padding: '12px 14px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                    <div style={{ fontSize: '11px', color: '#64748b' }}>Quyết định xử lý của WAF</div>
+                    <div style={{ fontSize: '14px', fontWeight: 700, color: '#16a34a', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
                       <i className="fa-solid fa-circle-check"></i> Chặn truy cập (403 Forbidden)
                     </div>
                   </div>
 
-                  <div style={{ background: '#1e293b', padding: '12px 14px', borderRadius: '8px', gridColumn: 'span 2' }}>
-                    <div style={{ fontSize: '11px', color: '#94a3b8' }}>Quy tắc bảo vệ OWASP Core Rule Set</div>
-                    <div style={{ fontSize: '13px', fontWeight: 700, color: '#c084fc', marginTop: '4px' }}>
+                  <div style={{ background: '#f8fafc', padding: '12px 14px', borderRadius: '8px', border: '1px solid #e2e8f0', gridColumn: 'span 2' }}>
+                    <div style={{ fontSize: '11px', color: '#64748b' }}>Quy tắc bảo vệ OWASP Core Rule Set</div>
+                    <div style={{ fontSize: '13px', fontWeight: 700, color: '#7e22ce', marginTop: '4px' }}>
                       Rule #{selectedLogModal.rule_id} — {selectedLogModal.rule_msg}
                     </div>
                   </div>
 
-                  <div style={{ background: '#1e293b', padding: '12px 14px', borderRadius: '8px', gridColumn: 'span 2' }}>
-                    <div style={{ fontSize: '11px', color: '#94a3b8' }}>Thời điểm phát hiện</div>
-                    <div style={{ fontSize: '12.5px', fontFamily: 'var(--font-mono, monospace)', color: '#cbd5e1', marginTop: '4px' }}>
+                  <div style={{ background: '#f8fafc', padding: '12px 14px', borderRadius: '8px', border: '1px solid #e2e8f0', gridColumn: 'span 2' }}>
+                    <div style={{ fontSize: '11px', color: '#64748b' }}>Thời điểm phát hiện</div>
+                    <div style={{ fontSize: '12.5px', fontFamily: 'var(--font-mono, monospace)', color: '#334155', marginTop: '4px' }}>
                       {formatTimestamp(selectedLogModal.timestamp).full}
                     </div>
                   </div>
@@ -1887,39 +2168,39 @@ export default function InterceptionLogs({
 
               {activeModalTab === 'payload' && (
                 <div>
-                  <div style={{ fontSize: '12px', fontWeight: 700, color: '#94a3b8', marginBottom: '6px' }}>
+                  <div style={{ fontSize: '12px', fontWeight: 700, color: '#475569', marginBottom: '6px' }}>
                     HTTP URI Mục tiêu:
                   </div>
                   <pre
                     style={{
-                      background: '#090d16',
-                      color: '#34d399',
+                      background: '#f8fafc',
+                      color: '#0284c7',
                       padding: '12px',
                       borderRadius: '6px',
                       fontSize: '12px',
                       fontFamily: 'var(--font-mono, monospace)',
                       overflowX: 'auto',
-                      border: '1px solid #1e293b',
+                      border: '1px solid #e2e8f0',
                       marginBottom: '14px',
                     }}
                   >
                     {safeDecodeURI(selectedLogModal.uri)}
                   </pre>
 
-                  <div style={{ fontSize: '12px', fontWeight: 700, color: '#94a3b8', marginBottom: '6px' }}>
+                  <div style={{ fontSize: '12px', fontWeight: 700, color: '#475569', marginBottom: '6px' }}>
                     Payload độc hại trích xuất từ Request:
                   </div>
                   <pre
                     style={{
-                      background: '#18121f',
-                      color: '#fca5a5',
+                      background: '#fff5f5',
+                      color: '#b91c1c',
                       padding: '12px',
                       borderRadius: '6px',
                       fontSize: '12px',
                       fontFamily: 'var(--font-mono, monospace)',
                       overflowX: 'auto',
                       borderLeft: '4px solid #ef4444',
-                      border: '1px solid rgba(239, 68, 68, 0.3)',
+                      border: '1px solid #fecaca',
                     }}
                   >
                     {safeDecodeURI(selectedLogModal.raw_payload || selectedLogModal.uri)}
@@ -1933,25 +2214,25 @@ export default function InterceptionLogs({
                     const parsed = parseUserAgent(selectedLogModal.user_agent);
                     return (
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px' }}>
-                        <div style={{ background: '#1e293b', padding: '14px', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '12px' }}>
-                          <i className={parsed.browser.icon} style={{ fontSize: '24px', color: '#38bdf8' }}></i>
+                        <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', padding: '14px', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                          <i className={parsed.browser.icon} style={{ fontSize: '24px', color: '#0284c7' }}></i>
                           <div>
-                            <div style={{ fontSize: '11px', color: '#94a3b8' }}>Trình duyệt / Công cụ</div>
-                            <div style={{ fontSize: '14px', fontWeight: 700, color: '#f8fafc' }}>{parsed.browser.name}</div>
+                            <div style={{ fontSize: '11px', color: '#64748b' }}>Trình duyệt / Công cụ</div>
+                            <div style={{ fontSize: '14px', fontWeight: 700, color: '#0f172a' }}>{parsed.browser.name}</div>
                           </div>
                         </div>
 
-                        <div style={{ background: '#1e293b', padding: '14px', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '12px' }}>
-                          <i className={parsed.os.icon} style={{ fontSize: '24px', color: '#34d399' }}></i>
+                        <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', padding: '14px', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                          <i className={parsed.os.icon} style={{ fontSize: '24px', color: '#16a34a' }}></i>
                           <div>
-                            <div style={{ fontSize: '11px', color: '#94a3b8' }}>Hệ điều hành</div>
-                            <div style={{ fontSize: '14px', fontWeight: 700, color: '#f8fafc' }}>{parsed.os.name}</div>
+                            <div style={{ fontSize: '11px', color: '#64748b' }}>Hệ điều hành</div>
+                            <div style={{ fontSize: '14px', fontWeight: 700, color: '#0f172a' }}>{parsed.os.name}</div>
                           </div>
                         </div>
 
-                        <div style={{ background: '#1e293b', padding: '14px', borderRadius: '8px', gridColumn: 'span 2' }}>
-                          <div style={{ fontSize: '11px', color: '#94a3b8' }}>Chuỗi User-Agent đầy đủ</div>
-                          <code style={{ fontSize: '11.5px', color: '#cbd5e1', display: 'block', marginTop: '6px', wordBreak: 'break-all' }}>
+                        <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', padding: '14px', borderRadius: '8px', gridColumn: 'span 2' }}>
+                          <div style={{ fontSize: '11px', color: '#64748b' }}>Chuỗi User-Agent đầy đủ</div>
+                          <code style={{ fontSize: '11.5px', color: '#334155', display: 'block', marginTop: '6px', wordBreak: 'break-all' }}>
                             {selectedLogModal.user_agent || 'Mozilla/5.0'}
                           </code>
                         </div>
@@ -1964,7 +2245,7 @@ export default function InterceptionLogs({
               {activeModalTab === 'curl' && (
                 <div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                    <span style={{ fontSize: '12px', fontWeight: 700, color: '#94a3b8' }}>
+                    <span style={{ fontSize: '12px', fontWeight: 700, color: '#475569' }}>
                       Lệnh cURL mô phỏng và tái hiện:
                     </span>
                     <button
@@ -1974,9 +2255,10 @@ export default function InterceptionLogs({
                         padding: '4px 10px',
                         fontSize: '11px',
                         borderRadius: '6px',
-                        border: '1px solid #10b981',
-                        background: 'rgba(16, 185, 129, 0.15)',
-                        color: '#34d399',
+                        border: '1px solid #86efac',
+                        background: '#f0fdf4',
+                        color: '#16a34a',
+                        fontWeight: 600,
                         cursor: 'pointer',
                         display: 'flex',
                         alignItems: 'center',
@@ -1989,8 +2271,8 @@ export default function InterceptionLogs({
                   </div>
                   <pre
                     style={{
-                      background: '#090d16',
-                      color: '#f8fafc',
+                      background: '#0f172a',
+                      color: '#34d399',
                       padding: '14px',
                       borderRadius: '6px',
                       fontSize: '12px',
@@ -2009,13 +2291,13 @@ export default function InterceptionLogs({
             <div
               style={{
                 padding: '12px 20px',
-                borderTop: '1px solid #1e293b',
+                borderTop: '1px solid #e2e8f0',
                 display: 'flex',
                 justifyContent: 'space-between',
                 alignItems: 'center',
                 flexWrap: 'wrap',
                 gap: '8px',
-                background: '#0b1329',
+                background: '#f8fafc',
               }}
             >
               <button
@@ -2024,10 +2306,11 @@ export default function InterceptionLogs({
                 style={{
                   padding: '6px 12px',
                   borderRadius: '6px',
-                  border: '1px solid #475569',
-                  background: 'transparent',
-                  color: '#cbd5e1',
+                  border: '1px solid #cbd5e1',
+                  background: '#ffffff',
+                  color: '#475569',
                   fontSize: '12px',
+                  fontWeight: 600,
                   cursor: 'pointer',
                 }}
               >
@@ -2044,9 +2327,9 @@ export default function InterceptionLogs({
                   style={{
                     padding: '6px 12px',
                     borderRadius: '6px',
-                    border: '1px solid rgba(16, 185, 129, 0.4)',
-                    background: 'rgba(16, 185, 129, 0.15)',
-                    color: '#34d399',
+                    border: '1px solid #86efac',
+                    background: '#f0fdf4',
+                    color: '#16a34a',
                     fontSize: '12px',
                     fontWeight: 700,
                     cursor: 'pointer',
@@ -2055,7 +2338,7 @@ export default function InterceptionLogs({
                     gap: '6px',
                   }}
                 >
-                  <i className="fa-solid fa-shield-check"></i> Whitelist
+                  <i className="fa-solid fa-circle-check"></i> Whitelist
                 </button>
 
                 <button
@@ -2067,9 +2350,9 @@ export default function InterceptionLogs({
                   style={{
                     padding: '6px 12px',
                     borderRadius: '6px',
-                    border: '1px solid rgba(245, 158, 11, 0.4)',
-                    background: 'rgba(245, 158, 11, 0.15)',
-                    color: '#fbbf24',
+                    border: '1px solid #fcd34d',
+                    background: '#fffbeb',
+                    color: '#d97706',
                     fontSize: '12px',
                     fontWeight: 700,
                     cursor: 'pointer',
@@ -2099,6 +2382,7 @@ export default function InterceptionLogs({
                     display: 'flex',
                     alignItems: 'center',
                     gap: '6px',
+                    boxShadow: '0 1px 2px rgba(239, 68, 68, 0.25)',
                   }}
                 >
                   <i className="fa-solid fa-ban"></i> Chặn Vĩnh Viễn

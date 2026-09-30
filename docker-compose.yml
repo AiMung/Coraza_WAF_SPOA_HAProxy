@@ -4,6 +4,8 @@ services:
     image: nginx:alpine
     container_name: protected-app
     restart: unless-stopped
+    environment:
+      - TZ=Asia/Ho_Chi_Minh
     volumes:
       - ./protected-app:/usr/share/nginx/html:ro
     networks:
@@ -16,6 +18,8 @@ services:
       dockerfile: Dockerfile
     container_name: coraza-spoa
     restart: unless-stopped
+    environment:
+      - TZ=Asia/Ho_Chi_Minh
     volumes:
       - ./coraza-spoa/config.yaml:/etc/coraza-spoa/config.yaml:ro
       - ./coraza-spoa/coraza.conf:/etc/coraza-spoa/coraza.conf:ro
@@ -31,6 +35,8 @@ services:
     restart: unless-stopped
     ports:
       - "80:80"
+    environment:
+      - TZ=Asia/Ho_Chi_Minh
     volumes:
       - haproxy-config:/usr/local/etc/haproxy/config:rw
       - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:rw
@@ -63,6 +69,7 @@ services:
       - haproxy-sock:/var/run/haproxy
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
+      - TZ=Asia/Ho_Chi_Minh
       - PORT=8080
       - DB_PATH=/app/data/waf.db
       - AUDIT_LOG_PATH=/var/log/coraza/audit.log

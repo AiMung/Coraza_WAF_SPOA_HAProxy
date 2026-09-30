@@ -8,5 +8,9 @@ frontend/dist/
 node_modules/
 frontend/node_modules/
 data/
+backend/data/
 .env
+server
+backend/server
+*.tar.gz
 

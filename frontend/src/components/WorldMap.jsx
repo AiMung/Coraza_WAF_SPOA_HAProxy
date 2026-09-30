@@ -2,21 +2,21 @@ import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
-// High-performance light & clean tile providers for Light Theme
+// 100% Free, High-performance Tile Providers (NO watermark, NO API key required)
 const TILE_PROVIDERS = {
-  light: {
-    name: 'Bản đồ Sáng (CartoDB Clean)',
-    url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
-    attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
-    maxZoom: 19,
-    subdomains: ['a', 'b', 'c', 'd'],
-  },
   osm: {
     name: 'OpenStreetMap Chuẩn',
-    url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
     attribution: '&copy; OpenStreetMap contributors',
     maxZoom: 19,
     subdomains: ['a', 'b', 'c'],
+  },
+  esri: {
+    name: 'Bản đồ Đường phố (Esri Street)',
+    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
+    attribution: '&copy; Esri &mdash; National Geographic, DeLorme, NAVTEQ',
+    maxZoom: 18,
+    subdomains: [],
   },
   topo: {
     name: 'Địa Hình (Topo)',
@@ -32,7 +32,7 @@ export default function WorldMap({ attackPins = [], height = '100%' }) {
   const mapInstanceRef = useRef(null);
   const tileLayerRef = useRef(null);
   const layerGroupRef = useRef(null);
-  const [mapTheme, setMapTheme] = useState('light');
+  const [mapTheme, setMapTheme] = useState('osm');
 
   // Initialize Map
   useEffect(() => {
@@ -285,22 +285,6 @@ export default function WorldMap({ attackPins = [], height = '100%' }) {
       >
         <div style={{ display: 'flex', gap: '4px' }}>
           <button
-            onClick={() => setMapTheme('light')}
-            style={{
-              border: 'none',
-              background: mapTheme === 'light' ? '#2563eb' : 'transparent',
-              color: mapTheme === 'light' ? '#ffffff' : '#475569',
-              fontSize: '11.5px',
-              fontWeight: 600,
-              padding: '4px 10px',
-              borderRadius: '5px',
-              cursor: 'pointer',
-              transition: 'all 0.15s',
-            }}
-          >
-            <i className="fa-solid fa-sun" style={{ marginRight: '4px' }}></i> Sáng
-          </button>
-          <button
             onClick={() => setMapTheme('osm')}
             style={{
               border: 'none',
@@ -314,7 +298,23 @@ export default function WorldMap({ attackPins = [], height = '100%' }) {
               transition: 'all 0.15s',
             }}
           >
-            <i className="fa-solid fa-map" style={{ marginRight: '4px' }}></i> Chuẩn
+            <i className="fa-solid fa-map" style={{ marginRight: '4px' }}></i> OSM Sáng
+          </button>
+          <button
+            onClick={() => setMapTheme('esri')}
+            style={{
+              border: 'none',
+              background: mapTheme === 'esri' ? '#2563eb' : 'transparent',
+              color: mapTheme === 'esri' ? '#ffffff' : '#475569',
+              fontSize: '11.5px',
+              fontWeight: 600,
+              padding: '4px 10px',
+              borderRadius: '5px',
+              cursor: 'pointer',
+              transition: 'all 0.15s',
+            }}
+          >
+            <i className="fa-solid fa-road" style={{ marginRight: '4px' }}></i> Đường Phố
           </button>
           <button
             onClick={() => setMapTheme('topo')}
@@ -330,7 +330,7 @@ export default function WorldMap({ attackPins = [], height = '100%' }) {
               transition: 'all 0.15s',
             }}
           >
-            <i className="fa-solid fa-mountain" style={{ marginRight: '4px' }}></i> Topo
+            <i className="fa-solid fa-mountain" style={{ marginRight: '4px' }}></i> Địa Hình
           </button>
         </div>
 

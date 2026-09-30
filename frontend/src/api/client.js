@@ -55,6 +55,7 @@ export const wafApi = {
   deleteSite: (id) => apiSend(`/sites/${id}`, 'DELETE'),
   toggleSiteWAF: (id, payload = {}) => apiSend(`/sites/${id}/toggle`, 'POST', payload),
   pingSite: (id) => apiSend(`/sites/${id}/ping`, 'POST'),
+  testWAFSite: (id) => apiSend(`/sites/${id}/test-waf`, 'POST'),
   simulate: (type = 'sqli') => apiSend(`/simulate-attack?type=${encodeURIComponent(type)}`, 'POST'),
   systemFix: () => apiSend('/system/fix', 'POST'),
   systemReboot: () => apiSend('/system/reboot', 'POST'),
