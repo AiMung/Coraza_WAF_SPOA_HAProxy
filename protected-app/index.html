@@ -3,64 +3,161 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>E-Commerce Demo & Security Testing Portal (Protected Web App)</title>
+    <title>Enterprise Web Application - Protected by Coraza WAF & HAProxy</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
-        body { background: #0f172a; color: #f8fafc; min-height: 100vh; padding: 30px 20px; }
-        .container { max-width: 900px; margin: 0 auto; }
-        .header { text-align: center; margin-bottom: 30px; }
-        .header h1 { font-size: 28px; color: #38bdf8; margin-bottom: 8px; }
-        .badge { display: inline-block; padding: 4px 12px; background: rgba(34, 197, 94, 0.2); color: #4ade80; border-radius: 9999px; font-size: 13px; font-weight: 600; }
+        :root {
+            --bg-base: #090d16;
+            --bg-card: rgba(15, 23, 42, 0.85);
+            --border-card: rgba(255, 255, 255, 0.08);
+            --accent-green: #10b981;
+            --accent-cyan: #06b6d4;
+            --accent-red: #f43f5e;
+            --accent-purple: #a855f7;
+            --font-sans: 'Plus Jakarta Sans', sans-serif;
+            --font-mono: 'JetBrains Mono', monospace;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: var(--font-sans); }
+        body { 
+            background-color: var(--bg-base); 
+            color: #f8fafc; 
+            min-height: 100vh; 
+            padding: 40px 20px;
+            background-image: 
+                radial-gradient(circle at 10% 10%, rgba(16, 185, 129, 0.05) 0%, transparent 40%),
+                radial-gradient(circle at 90% 90%, rgba(6, 182, 212, 0.05) 0%, transparent 40%);
+        }
+
+        .container { max-width: 960px; margin: 0 auto; }
+        
+        .header { text-align: center; margin-bottom: 36px; }
+        .badge-shield { 
+            display: inline-flex; 
+            align-items: center; 
+            gap: 8px; 
+            padding: 6px 16px; 
+            background: rgba(16, 185, 129, 0.12); 
+            border: 1px solid rgba(16, 185, 129, 0.35); 
+            color: #34d399; 
+            border-radius: 999px; 
+            font-size: 12px; 
+            font-weight: 700; 
+            letter-spacing: 0.5px;
+            box-shadow: 0 0 15px rgba(16, 185, 129, 0.2);
+            margin-bottom: 14px;
+        }
+
+        .header h1 { font-size: 30px; font-weight: 800; color: #ffffff; letter-spacing: -0.5px; margin-bottom: 8px; }
+        .header p { color: #94a3b8; font-size: 14px; }
+
         .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-bottom: 30px; }
-        .card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 20px; }
-        .card h3 { font-size: 18px; margin-bottom: 12px; color: #f1f5f9; display: flex; align-items: center; gap: 8px; }
-        .card p { font-size: 13px; color: #94a3b8; margin-bottom: 16px; line-height: 1.5; }
-        .test-btn { display: inline-block; width: 100%; padding: 10px; background: #2563eb; color: #fff; text-align: center; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px; transition: background 0.2s; border: none; cursor: pointer; }
-        .test-btn:hover { background: #1d4ed8; }
-        .test-btn.danger { background: #dc2626; }
-        .test-btn.danger:hover { background: #b91c1c; }
-        .status-box { background: #0b1329; border: 1px solid #1e3a8a; border-radius: 10px; padding: 15px; margin-top: 25px; font-family: monospace; font-size: 13px; }
+        .card { 
+            background: var(--bg-card); 
+            border: 1px solid var(--border-card); 
+            border-radius: 12px; 
+            padding: 22px; 
+            backdrop-filter: blur(12px);
+            transition: all 0.2s;
+            display: flex;
+            flex-direction: column;
+        }
+        .card:hover { transform: translateY(-2px); border-color: rgba(56, 189, 248, 0.4); box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5); }
+        .card h3 { font-size: 16px; font-weight: 700; color: #ffffff; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+        .card p { font-size: 12px; color: #94a3b8; line-height: 1.6; margin-bottom: 18px; flex: 1; }
+
+        .test-btn { 
+            display: inline-flex; 
+            align-items: center; 
+            justify-content: center; 
+            gap: 8px; 
+            width: 100%; 
+            padding: 10px 16px; 
+            border-radius: 8px; 
+            text-decoration: none; 
+            font-weight: 600; 
+            font-size: 13px; 
+            transition: all 0.2s; 
+            border: none; 
+            cursor: pointer; 
+        }
+
+        .test-btn.clean { background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: #fff; box-shadow: 0 0 12px rgba(16, 185, 129, 0.3); }
+        .test-btn.clean:hover { background: #059669; }
+
+        .test-btn.danger { background: linear-gradient(135deg, #f43f5e 0%, #e11d48 100%); color: #fff; box-shadow: 0 0 12px rgba(244, 63, 94, 0.3); }
+        .test-btn.danger:hover { background: #e11d48; }
+
+        .test-btn.purple { background: linear-gradient(135deg, #a855f7 0%, #9333ea 100%); color: #fff; box-shadow: 0 0 12px rgba(168, 85, 247, 0.3); }
+        .test-btn.purple:hover { background: #9333ea; }
+
+        .status-box { 
+            background: rgba(15, 23, 42, 0.95); 
+            border: 1px solid rgba(56, 189, 248, 0.25); 
+            border-radius: 12px; 
+            padding: 20px; 
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+            font-size: 12px;
+        }
+
+        .status-item { display: flex; align-items: center; gap: 8px; }
+        .status-item .dot { width: 8px; height: 8px; border-radius: 50%; background: #10b981; box-shadow: 0 0 8px #10b981; }
+        .status-item strong { color: #f8fafc; }
+        .status-item span { color: #94a3b8; }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <span class="badge">🛡️ BEHIND CORAZA WAF SHIELD</span>
-            <h1>Cổng Ứng Dụng Mẫu (Target Web App)</h1>
-            <p style="color: #94a3b8; margin-top: 6px;">Ứng dụng web được bảo vệ bởi HAProxy Reverse Proxy + Coraza SPOA WAF</p>
+            <span class="badge-shield"><i class="fa-solid fa-shield-halved"></i> HARDENED BY CORAZA WAF & HAPROXY</span>
+            <h1>Cổng Ứng Dụng Mẫu (Protected Web App)</h1>
+            <p>Hệ thống máy chủ ứng dụng web được bảo vệ an toàn tuyệt đối bởi Coraza SPOA WAF Engine & OWASP Core Rule Set v4.9</p>
         </div>
 
         <div class="grid">
             <div class="card">
-                <h3>🔍 1. Truy cập Hợp Lệ (Clean Traffic)</h3>
-                <p>Gửi yêu cầu HTTP bình thường không mang theo mã độc để kiểm tra tốc độ phản hồi 200 OK qua WAF.</p>
-                <a href="/?page=home&user=guest" class="test-btn">Thử Truy Cập Hợp Lệ (200 OK)</a>
+                <h3><i class="fa-solid fa-circle-check" style="color: #10b981;"></i> 1. Truy cập Hợp Lệ (Clean Traffic)</h3>
+                <p>Gửi yêu cầu HTTP thông thường không chứa mã độc. HAProxy & Coraza WAF sẽ cho phép đi qua và phản hồi <strong>HTTP 200 OK</strong>.</p>
+                <a href="/?page=home&user=guest" class="test-btn clean" target="_blank">
+                    <i class="fa-solid fa-arrow-right"></i> Thử Truy Cập Hợp Lệ (200 OK)
+                </a>
             </div>
 
             <div class="card">
-                <h3>💉 2. Test SQL Injection (SQLi)</h3>
-                <p>Gửi payload thử nghiệm khai thác lỗ hổng cơ sở dữ liệu (UNION SELECT / OR 1=1).</p>
-                <a href="/?id=1'%20OR%201=1--" class="test-btn danger" target="_blank">Test Tấn Công SQLi (Sẽ bị 403)</a>
+                <h3><i class="fa-solid fa-database" style="color: #f43f5e;"></i> 2. Test SQL Injection (SQLi)</h3>
+                <p>Gửi payload thử nghiệm khai thác lỗ hổng SQL (<code>UNION SELECT / OR 1=1--</code>). Coraza WAF sẽ chặn ngay với <strong>403 Forbidden</strong>.</p>
+                <a href="/?id=1'%20OR%201=1--" class="test-btn danger" target="_blank">
+                    <i class="fa-solid fa-skull"></i> Test Tấn Công SQLi (Bị 403)
+                </a>
             </div>
 
             <div class="card">
-                <h3>⚡ 3. Test Cross-Site Scripting (XSS)</h3>
-                <p>Gửi script chèn mã độc JavaScript (XSS Stored / Reflected) qua tham số URL query.</p>
-                <a href="/?search=<script>alert('WAF_XSS')</script>" class="test-btn danger" target="_blank">Test Tấn Công XSS (Sẽ bị 403)</a>
+                <h3><i class="fa-solid fa-code" style="color: #a855f7;"></i> 3. Test Cross-Site Scripting (XSS)</h3>
+                <p>Gửi script chèn mã độc JavaScript (<code>&lt;script&gt;alert(1)&lt;/script&gt;</code>) qua URL query. WAF sẽ tự động chặn và ghi audit log.</p>
+                <a href="/?search=<script>alert('WAF_XSS')</script>" class="test-btn purple" target="_blank">
+                    <i class="fa-solid fa-bolt"></i> Test Tấn Công XSS (Bị 403)
+                </a>
             </div>
 
             <div class="card">
-                <h3>📂 4. Test Path Traversal / LFI</h3>
-                <p>Gửi payload duyệt thư mục trái phép đọc file hệ thống <code>/etc/passwd</code>.</p>
-                <a href="/?doc=../../../../etc/passwd" class="test-btn danger" target="_blank">Test Đọc File LFI (Sẽ bị 403)</a>
+                <h3><i class="fa-solid fa-folder-open" style="color: #f43f5e;"></i> 4. Test Path Traversal / LFI</h3>
+                <p>Gửi payload duyệt thư mục trái phép đọc trộm file hệ thống (<code>../../../../etc/passwd</code>). WAF sẽ ngắt kết nối tức thì.</p>
+                <a href="/?doc=../../../../etc/passwd" class="test-btn danger" target="_blank">
+                    <i class="fa-solid fa-ban"></i> Test Đọc File LFI (Bị 403)
+                </a>
             </div>
         </div>
 
         <div class="status-box">
-            <div><strong>Trạng Thái Hệ Thống:</strong> Đang hoạt động bình thường</div>
-            <div><strong>Reverse Proxy:</strong> HAProxy 2.8+ Load Balancer</div>
-            <div><strong>WAF Engine:</strong> Coraza SPOA (Stream Processing Offload Agent in Go)</div>
-            <div><strong>OWASP Rule Set:</strong> Core Rule Set v4.9.0 + Custom Detection Signatures</div>
+            <div class="status-item"><span class="dot"></span> <span>Reverse Proxy:</span> <strong>HAProxy 2.8+ Load Balancer</strong></div>
+            <div class="status-item"><span class="dot"></span> <span>WAF Engine:</span> <strong>Coraza SPOA (Go Binary Engine)</strong></div>
+            <div class="status-item"><span class="dot"></span> <span>Ruleset Defense:</span> <strong>OWASP Core Rule Set (CRS v4.9.0)</strong></div>
+            <div class="status-item"><span class="dot"></span> <span>Audit Stream:</span> <strong>Real-time WebSocket & SQLite WAL</strong></div>
         </div>
     </div>
 </body>

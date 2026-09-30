@@ -1,4 +1,4 @@
-FROM golang:1.23-alpine AS builder
+FROM golang:alpine AS builder
 
 RUN apk add --no-cache git make gcc musl-dev
 
@@ -6,7 +6,7 @@ WORKDIR /src
 # Clone official coraza-spoa
 RUN git clone --depth 1 https://github.com/corazawaf/coraza-spoa.git . \
     && go mod download \
-    && CGO_ENABLED=0 go build -ldflags="-s -w" -o /coraza-spoa ./cmd/coraza-spoa
+    && CGO_ENABLED=0 go build -ldflags="-s -w" -o /coraza-spoa .
 
 # Download OWASP Core Rule Set (CRS)
 WORKDIR /crs

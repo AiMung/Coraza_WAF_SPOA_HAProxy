@@ -9,16 +9,24 @@ Hệ thống Tường lửa Ứng dụng Web (Web Application Firewall - WAF) th
 
 ---
 
-## 🚀 2. Cách Chạy Dự Án Bằng Docker
-
-Tại thư mục dự án trên máy ảo Ubuntu (`192.168.246.100`):
+## 🚀 2. Khởi động bằng menu script (khuyên dùng)
 
 ```bash
-# 1. Build và khởi động toàn bộ hệ thống
-docker compose up -d --build
+chmod +x waf.sh
+./waf.sh
+```
 
-# 2. Kiểm tra trạng thái các container
-docker compose ps
+Menu gồm:
+1. **Khởi động hệ thống** — build React (`frontend/dist`) rồi `docker compose up -d --build`
+2. Dừng / restart / xem trạng thái & log
+3. Build riêng UI, rebuild stack, chạy `test_waf.sh`
+4. Dev UI Vite (`http://HOST:5173`) khi backend đã chạy cổng 8080
+
+Hoặc thủ công:
+
+```bash
+cd frontend && npm install && npm run build && cd ..
+docker compose up -d --build
 ```
 
 ---

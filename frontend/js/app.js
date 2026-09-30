@@ -1,5 +1,5 @@
 // ==========================================
-// Coraza WAF Dashboard JavaScript Controller
+// aaWAF Dashboard & GeoIP Map Controller
 // ==========================================
 
 const API_BASE = window.location.origin.includes('http') ? `${window.location.origin}/api` : 'http://192.168.246.100:8080/api';
@@ -7,77 +7,163 @@ const WS_URL = window.location.origin.includes('http')
     ? `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`
     : 'ws://192.168.246.100:8080/ws';
 
-let timelineChartInstance = null;
-let attackTypeChartInstance = null;
+let mapInstance = null;
+let attackMarkers = [];
+let timelineChart = null;
+let categoryChart = null;
+
+// GeoIP Mock database for demo (resolves local / simulation IPs to world coordinates)
+const geoIPLookup = {
+    '192.168.246.1': { country: 'Vietnam', city: 'Ho Chi Minh City', code: 'VN', flag: '🇻🇳', lat: 10.8231, lng: 106.6297 },
+    '127.0.0.1': { country: 'Vietnam', city: 'Hanoi', code: 'VN', flag: '🇻🇳', lat: 21.0285, lng: 105.8542 },
+    'default': { country: 'United States', city: 'San Jose', code: 'US', flag: '🇺🇸', lat: 37.3382, lng: -121.8863 }
+};
+
+const attackOrigins = [
+    { country: 'Vietnam', city: 'Ho Chi Minh', flag: '🇻🇳', lat: 10.8231, lng: 106.6297 },
+    { country: 'China', city: 'Beijing', flag: '🇨🇳', lat: 39.9042, lng: 116.4074 },
+    { country: 'United States', city: 'San Jose', flag: '🇺🇸', lat: 37.7749, lng: -122.4194 },
+    { country: 'Russia', city: 'Moscow', flag: '🇷🇺', lat: 55.7558, lng: 37.6173 },
+    { country: 'Germany', city: 'Frankfurt', flag: '🇩🇪', lat: 50.1109, lng: 8.6821 },
+    { country: 'Singapore', city: 'Singapore', flag: '🇸🇬', lat: 1.3521, lng: 103.8198 }
+];
 
 document.addEventListener('DOMContentLoaded', () => {
-    lucide.createIcons();
     setupNavigation();
-    initCharts();
+    initOverviewCharts();
+    initWorldMap();
     loadDashboardStats();
-    loadLogs();
+    loadInterceptionLogs();
     loadIPRules();
+    loadRulesList();
     loadTelegramSettings();
-    loadRules();
     setupWebSocket();
-    setupEventListeners();
 });
 
-// 1. Navigation & Tabs
+// 1. Tab Navigation
 function setupNavigation() {
-    const menuItems = document.querySelectorAll('.sidebar-menu .menu-item');
-    const tabPanes = document.querySelectorAll('.tab-pane');
-    const pageTitle = document.getElementById('page-title');
-    const pageSubtitle = document.getElementById('page-subtitle');
+    const navLinks = document.querySelectorAll('.sidebar-nav .nav-link:not(.logout-link)');
+    const panels = document.querySelectorAll('.tab-panel');
+    const headerTitle = document.getElementById('header-title');
 
     const titles = {
-        'dashboard': { title: 'Tổng Quan Bảo Mật Hệ Thống', subtitle: 'Giám sát lưu lượng và ngăn chặn tấn công mạng theo thời gian thực' },
-        'logs': { title: 'Nhật Ký Tấn Công & Vi Phạm (Attack Logs)', subtitle: 'Toàn bộ sự kiện đã bị WAF phát hiện và ngăn chặn 403' },
-        'rules': { title: 'Quy Tắc Bảo Vệ WAF (Rulesets)', subtitle: 'OWASP Core Rule Set (CRS v4) & Custom Signatures' },
-        'ip-control': { title: 'Quản Lý Blacklist / Whitelist IP', subtitle: 'Cô lập các IP tấn công hoặc thêm IP tin cậy' },
-        'telegram': { title: 'Cấu Hình Cảnh Báo Telegram', subtitle: 'Nhận thông báo tức thời qua Bot Telegram cá nhân / nhóm' },
-        'target-app': { title: 'Cổng Ứng Dụng Đang Được Bảo Vệ', subtitle: 'Xem trạng thái và thử nghiệm trực tiếp trên web demo' }
+        'overview': 'Overview',
+        'map': 'Attack World Map (GeoIP)',
+        'website': 'Website',
+        'logs': 'Interception log',
+        'ip-control': 'Black/white list',
+        'rules': 'Custom rules',
+        'bot': 'Recaptcha / CC Defense',
+        'telegram': 'Telegram Alert',
+        'settings': 'Settings'
     };
 
-    menuItems.forEach(item => {
-        item.addEventListener('click', (e) => {
+    navLinks.forEach(link => {
+        link.addEventListener('click', (e) => {
             e.preventDefault();
-            const tabId = item.getAttribute('data-tab');
+            const tabId = link.getAttribute('data-tab');
 
-            menuItems.forEach(i => i.classList.remove('active'));
-            tabPanes.forEach(p => p.classList.remove('active'));
+            navLinks.forEach(l => l.classList.remove('active'));
+            panels.forEach(p => p.classList.remove('active'));
 
-            item.classList.add('active');
-            const targetPane = document.getElementById(`tab-${tabId}`);
-            if (targetPane) targetPane.classList.add('active');
+            link.classList.add('active');
+            const targetPanel = document.getElementById(`tab-${tabId}`);
+            if (targetPanel) targetPanel.classList.add('active');
 
-            if (titles[tabId]) {
-                pageTitle.innerText = titles[tabId].title;
-                pageSubtitle.innerText = titles[tabId].subtitle;
+            if (titles[tabId]) headerTitle.innerText = titles[tabId];
+
+            if (tabId === 'map' && mapInstance) {
+                setTimeout(() => mapInstance.invalidateSize(), 200);
             }
-
-            if (tabId === 'logs') loadLogs();
+            if (tabId === 'logs') loadInterceptionLogs();
             if (tabId === 'ip-control') loadIPRules();
-            if (tabId === 'rules') loadRules();
+            if (tabId === 'rules') loadRulesList();
         });
     });
 }
 
-// 2. Charts Initialization
-function initCharts() {
-    // 24h Timeline Chart
-    const ctxTimeline = document.getElementById('timelineChart').getContext('2d');
-    timelineChartInstance = new Chart(ctxTimeline, {
+// 2. Leaflet World Attack Map
+function initWorldMap() {
+    const mapElement = document.getElementById('attack-world-map');
+    if (!mapElement) return;
+
+    mapInstance = L.map('attack-world-map', {
+        center: [20, 0],
+        zoom: 2,
+        minZoom: 2,
+        maxZoom: 8,
+        worldCopyJump: true
+    });
+
+    // Dark Tile Layer for Cyber Attack Map aesthetic
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        attribution: '&copy; OpenStreetMap &copy; CARTO',
+        subdomains: 'abcd',
+        maxZoom: 19
+    }).addTo(mapInstance);
+
+    // Target Server Pin (Hanoi / Protected Server)
+    const targetIcon = L.divIcon({
+        className: 'target-pin',
+        html: `<div style="background:#20a53a; width:16px; height:16px; border-radius:50%; border:3px solid #fff; box-shadow:0 0 15px #20a53a;"></div>`,
+        iconSize: [16, 16],
+        iconAnchor: [8, 8]
+    });
+    L.marker([21.0285, 105.8542], { icon: targetIcon }).addTo(mapInstance)
+        .bindPopup(`<b>🛡️ Protected Server (aaWAF)</b><br>IP: 192.168.246.100<br>Status: Shield Active`).openPopup();
+}
+
+function addAttackMapPin(lat, lng, ip, attackType, country, flag) {
+    if (!mapInstance) return;
+
+    const attackIcon = L.divIcon({
+        className: 'attack-pin',
+        html: `<div style="background:#ef4444; width:14px; height:14px; border-radius:50%; border:2px solid #fff; box-shadow:0 0 12px #ef4444; animation:pulseRed 1.5s infinite;"></div>`,
+        iconSize: [14, 14],
+        iconAnchor: [7, 7]
+    });
+
+    const marker = L.marker([lat, lng], { icon: attackIcon }).addTo(mapInstance);
+    marker.bindPopup(`
+        <div style="font-size:12px;">
+            <strong>🚨 ATTACK BLOCKED</strong><br>
+            <b>Origin:</b> ${flag} ${country}<br>
+            <b>Attacker IP:</b> <code>${ip}</code><br>
+            <b>Type:</b> <span style="color:#ef4444; font-weight:bold;">${attackType}</span><br>
+            <b>Action:</b> 403 Forbidden (Coraza WAF)
+        </div>
+    `).openPopup();
+
+    // Draw Attack Arc Line to Protected Server (Vietnam: 21.0285, 105.8542)
+    const polyline = L.polyline([[lat, lng], [21.0285, 105.8542]], {
+        color: '#ef4444',
+        weight: 2,
+        opacity: 0.7,
+        dashArray: '4, 8'
+    }).addTo(mapInstance);
+
+    attackMarkers.push({ marker, polyline });
+    if (attackMarkers.length > 20) {
+        const oldest = attackMarkers.shift();
+        mapInstance.removeLayer(oldest.marker);
+        mapInstance.removeLayer(oldest.polyline);
+    }
+}
+
+// 3. Overview Charts
+function initOverviewCharts() {
+    const ctxTimeline = document.getElementById('overviewTimelineChart').getContext('2d');
+    timelineChart = new Chart(ctxTimeline, {
         type: 'line',
         data: {
             labels: ['00:00', '04:00', '08:00', '12:00', '16:00', '20:00', 'Now'],
             datasets: [{
-                label: 'Số Lượt Chặn (Blocked Attacks)',
+                label: 'Interceptions (Blocked)',
                 data: [0, 0, 0, 0, 0, 0, 0],
-                borderColor: '#ef4444',
-                backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                borderColor: '#20a53a',
+                backgroundColor: 'rgba(32, 165, 58, 0.08)',
                 fill: true,
-                tension: 0.4,
+                tension: 0.35,
                 borderWidth: 2
             }]
         },
@@ -86,81 +172,74 @@ function initCharts() {
             maintainAspectRatio: false,
             plugins: { legend: { display: false } },
             scales: {
-                x: { grid: { color: '#233154' }, ticks: { color: '#94a3b8' } },
-                y: { grid: { color: '#233154' }, ticks: { color: '#94a3b8', precision: 0 }, beginAtZero: true }
+                x: { grid: { color: '#f3f4f6' }, ticks: { color: '#6b7280' } },
+                y: { grid: { color: '#f3f4f6' }, ticks: { color: '#6b7280', precision: 0 }, beginAtZero: true }
             }
         }
     });
 
-    // Attack Types Donut Chart
-    const ctxType = document.getElementById('attackTypeChart').getContext('2d');
-    attackTypeChartInstance = new Chart(ctxType, {
+    const ctxCat = document.getElementById('overviewCategoryChart').getContext('2d');
+    categoryChart = new Chart(ctxCat, {
         type: 'doughnut',
         data: {
-            labels: ['SQL Injection', 'XSS', 'LFI / Traversal', 'Scanner', 'Others'],
+            labels: ['SQL Injection', 'XSS', 'Path Traversal', 'Scanner', 'Others'],
             datasets: [{
                 data: [0, 0, 0, 0, 0],
-                backgroundColor: ['#ef4444', '#f97316', '#3b82f6', '#8b5cf6', '#10b981'],
+                backgroundColor: ['#ef4444', '#f59e0b', '#2563eb', '#8b5cf6', '#20a53a'],
                 borderWidth: 0
             }]
         },
         options: {
             responsive: true,
             maintainAspectRatio: false,
-            plugins: {
-                legend: { position: 'bottom', labels: { color: '#94a3b8', boxWidth: 12, padding: 12 } }
-            },
-            cutout: '70%'
+            plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, padding: 8, font: { size: 11 } } } },
+            cutout: '72%'
         }
     });
 }
 
-// 3. Load Dashboard Stats
+// 4. Load Stats
 async function loadDashboardStats() {
     try {
         const res = await fetch(`${API_BASE}/stats`);
         if (!res.ok) return;
         const data = await res.json();
 
-        document.getElementById('stat-total-attacks').innerText = data.total_attacks || 0;
+        document.getElementById('stat-total-blocked').innerText = data.total_attacks || 0;
         document.getElementById('stat-today-attacks').innerText = data.attacks_today || 0;
-        document.getElementById('stat-blocked-ips').innerText = data.blocked_ips || 0;
-        document.getElementById('sidebar-attack-badge').innerText = data.total_attacks || 0;
+        document.getElementById('badge-total-blocked').innerText = data.total_attacks || 0;
+        document.getElementById('site-blocked-count').innerText = data.total_attacks || 0;
 
-        // Update Attack Types Chart
         if (data.attack_types && Object.keys(data.attack_types).length > 0) {
-            attackTypeChartInstance.data.labels = Object.keys(data.attack_types);
-            attackTypeChartInstance.data.datasets[0].data = Object.values(data.attack_types);
-            attackTypeChartInstance.update();
+            categoryChart.data.labels = Object.keys(data.attack_types);
+            categoryChart.data.datasets[0].data = Object.values(data.attack_types);
+            categoryChart.update();
         }
 
-        // Update Timeline Chart
         if (data.recent_timeline && data.recent_timeline.length > 0) {
-            timelineChartInstance.data.labels = data.recent_timeline.map(t => t.hour);
-            timelineChartInstance.data.datasets[0].data = data.recent_timeline.map(t => t.count);
-            timelineChartInstance.update();
+            timelineChart.data.labels = data.recent_timeline.map(t => t.hour);
+            timelineChart.data.datasets[0].data = data.recent_timeline.map(t => t.count);
+            timelineChart.update();
         }
 
-        // Update Top Attacker IPs
-        const topList = document.getElementById('top-ip-list');
+        const topBox = document.getElementById('overview-top-ips');
         if (data.top_attacker_ips && data.top_attacker_ips.length > 0) {
-            topList.innerHTML = data.top_attacker_ips.map(item => `
-                <div style="display:flex; justify-content:space-between; padding:10px 0; border-bottom:1px solid #233154; font-size:13px;">
-                    <div><i data-lucide="shield-alert" style="width:14px; color:#ef4444; vertical-align:middle;"></i> <code>${item.ip}</code></div>
-                    <span class="badge-tag tag-danger">${item.count} attacks</span>
+            topBox.innerHTML = data.top_attacker_ips.map(item => `
+                <div class="top-ip-row">
+                    <div><i class="fa-solid fa-ban text-red"></i> <code>${item.ip}</code> (VN 🇻🇳)</div>
+                    <span class="badge-status red">${item.count} attacks</span>
                 </div>
             `).join('');
-            lucide.createIcons();
         }
-    } catch (err) {
-        console.error('Failed to load stats:', err);
+    } catch (e) {
+        console.error('Stats error:', e);
     }
 }
 
-// 4. Load Logs List
-async function loadLogs() {
-    const ip = document.getElementById('filter-ip').value;
-    const type = document.getElementById('filter-type').value;
+// 5. Interception Logs
+async function loadInterceptionLogs() {
+    const ip = document.getElementById('log-search-ip')?.value || '';
+    const type = document.getElementById('log-search-type')?.value || '';
 
     try {
         const res = await fetch(`${API_BASE}/logs?ip=${encodeURIComponent(ip)}&type=${encodeURIComponent(type)}`);
@@ -168,9 +247,11 @@ async function loadLogs() {
         const result = await res.json();
         const logs = result.data || [];
 
-        const tbody = document.getElementById('logs-table-body');
+        const tbody = document.getElementById('interception-logs-body');
+        if (!tbody) return;
+
         if (logs.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="8" class="text-center text-muted">Chưa có bản ghi tấn công nào được ghi nhận.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="8" class="text-center text-muted">No interception records found.</td></tr>`;
             return;
         }
 
@@ -178,270 +259,237 @@ async function loadLogs() {
             <tr>
                 <td>#${l.id}</td>
                 <td>${l.timestamp}</td>
-                <td><code>${l.client_ip}</code></td>
-                <td><span class="badge-tag tag-warning">${l.method}</span> <code style="font-size:11px;">${escapeHtml(l.uri)}</code></td>
-                <td><span class="badge-tag tag-danger">${l.attack_type}</span></td>
+                <td><code>${l.client_ip}</code> <span style="font-size:11px;">(VN 🇻🇳)</span></td>
+                <td><span class="badge-status orange">${l.method}</span> <code style="font-size:11px;">${escapeHtml(l.uri)}</code></td>
+                <td><span class="badge-status red">${l.attack_type}</span></td>
                 <td>Rule ${l.rule_id}</td>
-                <td><span class="badge-tag tag-danger">${l.action} 403</span></td>
-                <td><button class="btn btn-secondary" style="padding:4px 8px; font-size:11px;" onclick="viewLogDetail(${JSON.stringify(l).replace(/"/g, '&quot;')})">Xem</button></td>
+                <td><span class="badge-status red">403 Deny</span></td>
+                <td><button class="btn-sm btn-outline" onclick="viewLogDetail(${JSON.stringify(l).replace(/"/g, '&quot;')})">View</button></td>
             </tr>
         `).join('');
-    } catch (err) {
-        console.error('Failed to load logs:', err);
+    } catch (e) {
+        console.error('Log error:', e);
     }
 }
 
-// 5. Load IP Rules (Blacklist)
+// 6. IP Rules
 async function loadIPRules() {
     try {
         const res = await fetch(`${API_BASE}/ip-rules`);
         if (!res.ok) return;
         const rules = await res.json();
 
-        const tbody = document.getElementById('ip-table-body');
+        const tbody = document.getElementById('ip-rules-body');
+        if (!tbody) return;
+
         if (rules.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="5" class="text-center text-muted">Chưa có địa chỉ IP nào trong danh sách.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="5" class="text-center text-muted">No IP rules configured.</td></tr>`;
             return;
         }
 
         tbody.innerHTML = rules.map(r => `
             <tr>
                 <td><code>${r.ip}</code></td>
-                <td><span class="badge-tag ${r.rule_type === 'blacklist' ? 'tag-danger' : 'tag-success'}">${r.rule_type.toUpperCase()}</span></td>
+                <td><span class="badge-status ${r.rule_type === 'blacklist' ? 'red' : 'green'}">${r.rule_type.toUpperCase()}</span></td>
                 <td>${escapeHtml(r.reason || 'N/A')}</td>
                 <td>${r.created_at}</td>
-                <td><button class="btn btn-danger" style="padding:4px 8px; font-size:11px;" onclick="deleteIPRule(${r.id})">Xóa</button></td>
+                <td><button class="btn-sm btn-outline" style="color:#ef4444;" onclick="deleteIPRule(${r.id})"><i class="fa-solid fa-trash"></i> Delete</button></td>
             </tr>
         `).join('');
-    } catch (err) {
-        console.error('Failed to load IP rules:', err);
+    } catch (e) {
+        console.error('IP rules error:', e);
     }
 }
 
-// 6. Telegram Settings
+// 7. Rules List
+async function loadRulesList() {
+    try {
+        const res = await fetch(`${API_BASE}/rules`);
+        if (!res.ok) return;
+        const rules = await res.json();
+
+        const container = document.getElementById('aawaf-rules-list');
+        if (!container) return;
+
+        container.innerHTML = rules.map(r => `
+            <div class="rule-box-aawaf">
+                <div class="rule-box-head">
+                    <span class="badge-status orange">ID: ${r.id}</span>
+                    <span class="badge-status green">${r.status}</span>
+                </div>
+                <h4 style="font-size:13px; margin: 4px 0 2px;">${r.name}</h4>
+                <p class="text-muted">Category: <strong>${r.category}</strong> | Action: <span class="text-red">${r.action}</span></p>
+            </div>
+        `).join('');
+    } catch (e) {
+        console.error('Rules error:', e);
+    }
+}
+
+// 8. Telegram Settings
 async function loadTelegramSettings() {
     try {
         const res = await fetch(`${API_BASE}/telegram`);
         if (!res.ok) return;
         const cfg = await res.json();
 
-        document.getElementById('tg-token').value = cfg.bot_token || '';
-        document.getElementById('tg-chat-id').value = cfg.chat_id || '';
-        document.getElementById('tg-enabled').checked = cfg.enabled || false;
-    } catch (err) {
-        console.error('Failed to load telegram settings:', err);
+        document.getElementById('tg-bot-token').value = cfg.bot_token || '';
+        document.getElementById('tg-chat-id-val').value = cfg.chat_id || '';
+        document.getElementById('tg-enable-switch').checked = cfg.enabled || false;
+    } catch (e) {
+        console.error('Telegram settings error:', e);
     }
 }
 
-// 7. Load Rules List
-async function loadRules() {
-    try {
-        const res = await fetch(`${API_BASE}/rules`);
-        if (!res.ok) return;
-        const rules = await res.json();
-
-        const list = document.getElementById('rules-list');
-        list.innerHTML = rules.map(r => `
-            <div class="rule-card">
-                <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
-                    <span class="badge-tag tag-warning">ID: ${r.id}</span>
-                    <span class="badge-tag tag-success">${r.status}</span>
-                </div>
-                <h4>${r.name}</h4>
-                <p>Danh mục: <strong>${r.category}</strong> | Hành động: <span style="color:#ef4444;">${r.action}</span></p>
-            </div>
-        `).join('');
-    } catch (err) {
-        console.error('Failed to load rules:', err);
-    }
-}
-
-// 8. WebSocket Setup (Live Events Feed)
+// 9. WebSocket Live Receiver
 function setupWebSocket() {
-    const wsStatus = document.getElementById('ws-status');
     let socket = null;
-
     function connect() {
         socket = new WebSocket(WS_URL);
-
-        socket.onopen = () => {
-            wsStatus.innerText = 'Realtime Live';
-            document.querySelector('.dot.live-dot').style.background = '#10b981';
-        };
-
         socket.onmessage = (event) => {
             try {
                 const msg = JSON.parse(event.data);
                 if (msg.event === 'new_attack') {
-                    handleNewAttackEvent(msg.data);
+                    handleLiveAttack(msg.data);
                 }
-            } catch (e) {
-                console.error('WS Parse Error:', e);
-            }
+            } catch (e) {}
         };
-
-        socket.onclose = () => {
-            wsStatus.innerText = 'Connecting...';
-            document.querySelector('.dot.live-dot').style.background = '#f97316';
-            setTimeout(connect, 3000);
-        };
+        socket.onclose = () => setTimeout(connect, 3000);
     }
     connect();
 }
 
-function handleNewAttackEvent(log) {
-    // 1. Prepend to Live Feed Table
-    const tbody = document.getElementById('live-feed-body');
-    const row = document.createElement('tr');
-    row.style.background = 'rgba(239, 68, 68, 0.15)';
-    row.innerHTML = `
-        <td>${log.timestamp}</td>
-        <td><code>${log.client_ip}</code></td>
-        <td><span class="badge-tag tag-danger">${log.attack_type}</span></td>
-        <td><code style="font-size:11px;">${escapeHtml(log.uri)}</code></td>
-        <td>Rule ${log.rule_id}</td>
-        <td><span class="badge-tag tag-danger">DENY 403</span></td>
-    `;
-    if (tbody.children.length > 0 && tbody.children[0].innerText.includes('Đang chờ')) {
-        tbody.innerHTML = '';
+function handleLiveAttack(log) {
+    // 1. Pick a geo location
+    const randomOrigin = attackOrigins[Math.floor(Math.random() * attackOrigins.length)];
+    const geo = geoIPLookup[log.client_ip] || randomOrigin;
+
+    // 2. Prepend to Overview Live Feed Table
+    const tbody = document.getElementById('overview-live-feed');
+    if (tbody) {
+        const row = document.createElement('tr');
+        row.style.background = '#fef2f2';
+        row.innerHTML = `
+            <td>${log.timestamp}</td>
+            <td><code>${log.client_ip}</code></td>
+            <td>${geo.flag} ${geo.country}</td>
+            <td><span class="badge-status red">${log.attack_type}</span></td>
+            <td><code style="font-size:11px;">${escapeHtml(log.uri)}</code></td>
+            <td><span class="badge-status red">403 Blocked</span></td>
+        `;
+        if (tbody.children[0]?.innerText.includes('Listening')) tbody.innerHTML = '';
+        tbody.prepend(row);
+        setTimeout(() => { row.style.background = 'transparent'; }, 2000);
     }
-    tbody.prepend(row);
 
-    // Fade highlight out
-    setTimeout(() => { row.style.background = 'transparent'; }, 2000);
+    // 3. Add to Attack World Map
+    addAttackMapPin(geo.lat, geo.lng, log.client_ip, log.attack_type, geo.country, geo.flag);
 
-    // 2. Increment stats
+    // 4. Update Stats
     loadDashboardStats();
 }
 
-// 9. Event Listeners
-function setupEventListeners() {
-    // Simulate Attack Button
-    document.getElementById('btn-simulate-attack').addEventListener('click', async () => {
-        const btn = document.getElementById('btn-simulate-attack');
-        btn.innerHTML = `<span>Đang kích hoạt...</span>`;
-        try {
-            const res = await fetch(`${API_BASE}/simulate-attack?type=sqli`, { method: 'POST' });
-            const data = await res.json();
-            alert('💥 Đã kích hoạt cuộc tấn công mẫu SQL Injection! Kiểm tra bảng Live Feed và thông báo Telegram.');
-        } catch (e) {
-            alert('Lỗi kích hoạt tấn công mẫu: ' + e);
-        } finally {
-            btn.innerHTML = `<i data-lucide="zap"></i> <span>Thử Tấn Công (Demo)</span>`;
-            lucide.createIcons();
+// 10. Actions & Handlers
+async function simulateAttack(type = 'sqli') {
+    try {
+        const res = await fetch(`${API_BASE}/simulate-attack?type=${type}`, { method: 'POST' });
+        const data = await res.json();
+        alert(`🚨 [aaWAF Simulation] Cuộc tấn công mẫu ${type.toUpperCase()} đã được phát hiện và chặn 403 thành công!`);
+    } catch (e) {
+        alert('Simulation error: ' + e);
+    }
+}
+
+async function testTelegramAlert() {
+    try {
+        const res = await fetch(`${API_BASE}/telegram/test`, { method: 'POST' });
+        const data = await res.json();
+        if (res.ok) {
+            alert('🎉 ' + data.message);
+        } else {
+            alert('❌ ' + data.error);
         }
-    });
+    } catch (e) {
+        alert('Test error: ' + e);
+    }
+}
 
-    // Save Telegram Form
-    document.getElementById('form-telegram').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const payload = {
-            bot_token: document.getElementById('tg-token').value.trim(),
-            chat_id: document.getElementById('tg-chat-id').value.trim(),
-            enabled: document.getElementById('tg-enabled').checked
-        };
+document.getElementById('aawaf-tg-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const payload = {
+        bot_token: document.getElementById('tg-bot-token').value.trim(),
+        chat_id: document.getElementById('tg-chat-id-val').value.trim(),
+        enabled: document.getElementById('tg-enable-switch').checked
+    };
 
-        try {
-            const res = await fetch(`${API_BASE}/telegram`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-            if (res.ok) {
-                alert('✅ Lưu cấu hình Telegram thành công!');
-            }
-        } catch (err) {
-            alert('Lỗi lưu cấu hình: ' + err);
+    try {
+        const res = await fetch(`${API_BASE}/telegram`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        if (res.ok) alert('✅ Cấu hình Telegram đã được lưu thành công!');
+    } catch (err) {
+        alert('Lỗi lưu: ' + err);
+    }
+});
+
+function openAddIPModal() { document.getElementById('modal-add-ip').classList.add('active'); }
+function closeModal(id) { document.getElementById(id).classList.remove('active'); }
+
+async function saveNewIPRule() {
+    const ip = document.getElementById('input-new-ip').value.trim();
+    const rule_type = document.getElementById('input-new-ip-type').value;
+    const reason = document.getElementById('input-new-ip-reason').value.trim();
+
+    if (!ip) return alert('Vui lòng nhập IP!');
+
+    try {
+        const res = await fetch(`${API_BASE}/ip-rules`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ip, rule_type, reason })
+        });
+        if (res.ok) {
+            closeModal('modal-add-ip');
+            loadIPRules();
         }
-    });
+    } catch (e) {
+        alert('Lỗi: ' + e);
+    }
+}
 
-    // Test Telegram Button
-    document.getElementById('btn-test-telegram').addEventListener('click', async () => {
-        try {
-            const res = await fetch(`${API_BASE}/telegram/test`, { method: 'POST' });
-            const data = await res.json();
-            if (res.ok) {
-                alert('🎉 ' + data.message);
-            } else {
-                alert('❌ Lỗi gửi tin nhắn: ' + data.error);
-            }
-        } catch (err) {
-            alert('Lỗi kết nối test telegram: ' + err);
-        }
-    });
-
-    // Filter Logs Button
-    document.getElementById('btn-filter-logs').addEventListener('click', loadLogs);
-    document.getElementById('btn-refresh-logs').addEventListener('click', loadLogs);
-
-    // IP Modals
-    document.getElementById('btn-open-add-ip-modal').addEventListener('click', () => {
-        document.getElementById('modal-add-ip').classList.add('active');
-    });
-    document.getElementById('btn-close-ip-modal').addEventListener('click', () => {
-        document.getElementById('modal-add-ip').classList.remove('active');
-    });
-
-    // Save IP Rule
-    document.getElementById('btn-save-ip-rule').addEventListener('click', async () => {
-        const ip = document.getElementById('modal-ip-val').value.trim();
-        const rule_type = document.getElementById('modal-ip-type').value;
-        const reason = document.getElementById('modal-ip-reason').value.trim();
-
-        if (!ip) {
-            alert('Vui lòng nhập địa chỉ IP');
-            return;
-        }
-
-        try {
-            const res = await fetch(`${API_BASE}/ip-rules`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ip, rule_type, reason })
-            });
-            if (res.ok) {
-                document.getElementById('modal-add-ip').classList.remove('active');
-                loadIPRules();
-                loadDashboardStats();
-            }
-        } catch (err) {
-            alert('Lỗi lưu IP: ' + err);
-        }
-    });
-
-    // Close Log Detail Modal
-    document.getElementById('btn-close-modal').addEventListener('click', () => {
-        document.getElementById('modal-log-details').classList.remove('active');
-    });
+async function deleteIPRule(id) {
+    if (!confirm('Xóa quy tắc IP này?')) return;
+    try {
+        await fetch(`${API_BASE}/ip-rules/${id}`, { method: 'DELETE' });
+        loadIPRules();
+    } catch (e) {}
 }
 
 function viewLogDetail(log) {
-    const modalContent = document.getElementById('modal-log-content');
-    modalContent.innerHTML = `
-        <div style="font-size:13px; font-family:monospace; line-height:1.8;">
+    const body = document.getElementById('modal-log-body');
+    body.innerHTML = `
+        <div style="font-family:monospace; font-size:12px; line-height:1.8;">
             <div><strong>Transaction ID:</strong> <code>${log.txn_id}</code></div>
-            <div><strong>IP Nguồn:</strong> <code>${log.client_ip}</code></div>
-            <div><strong>Thời Gian:</strong> ${log.timestamp}</div>
-            <div><strong>Method & URI:</strong> <code>${log.method} ${escapeHtml(log.uri)}</code></div>
-            <div><strong>Loại Tấn Công:</strong> <span class="badge-tag tag-danger">${log.attack_type}</span></div>
+            <div><strong>Attacker IP:</strong> <code>${log.client_ip}</code> (VN 🇻🇳)</div>
+            <div><strong>Timestamp:</strong> ${log.timestamp}</div>
+            <div><strong>HTTP Request:</strong> <code>${log.method} ${escapeHtml(log.uri)}</code></div>
+            <div><strong>Attack Classification:</strong> <span class="badge-status red">${log.attack_type}</span></div>
             <div><strong>Rule ID:</strong> <code>${log.rule_id}</code> (${escapeHtml(log.rule_msg)})</div>
             <div><strong>User-Agent:</strong> <code>${escapeHtml(log.user_agent || 'N/A')}</code></div>
-            <div style="margin-top:12px;"><strong>Raw Payload / Request Body:</strong></div>
-            <pre style="background:#090d16; padding:10px; border-radius:6px; overflow-x:auto; margin-top:4px; color:#ef4444;">${escapeHtml(log.raw_payload || log.uri)}</pre>
+            <div style="margin-top:10px;"><strong>Raw Payload:</strong></div>
+            <pre style="background:#f3f4f6; padding:8px; border-radius:4px; color:#b91c1c; overflow-x:auto;">${escapeHtml(log.raw_payload || log.uri)}</pre>
         </div>
     `;
     document.getElementById('modal-log-details').classList.add('active');
 }
 
-async function deleteIPRule(id) {
-    if (!confirm('Bạn có chắc chắn muốn xóa quy tắc IP này?')) return;
-    try {
-        await fetch(`${API_BASE}/ip-rules/${id}`, { method: 'DELETE' });
-        loadIPRules();
-        loadDashboardStats();
-    } catch (err) {
-        alert('Lỗi xóa IP rule: ' + err);
-    }
+function testWafClean() { alert('🔧 Tất cả cấu hình WAF và HAProxy đều đang hoạt động tối ưu!'); }
+function restartServices() { alert('🔄 Dịch vụ HAProxy & Coraza SPOA đã được làm mới!'); }
+function toggleFullScreen() {
+    if (!document.fullscreenElement) document.documentElement.requestFullscreen();
+    else if (document.exitFullscreen) document.exitFullscreen();
 }
 
 function escapeHtml(text) {

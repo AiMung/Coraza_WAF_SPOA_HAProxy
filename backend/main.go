@@ -2,7 +2,6 @@ package main
 
 import (
 	"log"
-	"net/http"
 	"os"
 	"path/filepath"
 	"waf-backend/database"
@@ -28,16 +27,31 @@ func main() {
 	// 1. Initialize SQLite Database
 	database.InitDB(dbPath)
 
-	// 2. Load Configuration (Telegram, Rules)
+	// 2. Load Configuration & Start Interactive Telegram Bot
 	services.LoadTelegramConfig()
+	services.StartTelegramBot()
 
-	// 3. Start WebSocket Hub in background
+	// 3. Sync IP Blacklist/Whitelist to HAProxy & Coraza + Start Expiration Countdown Daemon
+	_ = services.SyncIPRulesToFile()
+	services.StartIPRulesExpirationDaemon()
+
+	// 4. Sync Protected Sites → Auto-generate HAProxy VHost routing config
+	if err := services.SyncSitesToHAProxy(); err != nil {
+		log.Printf("Warning: Initial HAProxy sites sync failed: %v", err)
+	}
+
+	// 5. Sync Custom Rules to custom_rules.conf
+	if err := services.SyncCustomRulesToFile(); err != nil {
+		log.Printf("Warning: Initial custom rules sync failed: %v", err)
+	}
+
+	// 6. Start WebSocket Hub in background
 	go services.WSHub.Run()
 
-	// 4. Start Coraza Audit Log Watcher in background
+	// 7. Start Coraza Audit Log Watcher in background
 	services.StartLogWatcher(auditLogPath)
 
-	// 5. Setup Gin Router
+	// 8. Setup Gin Router
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
 
@@ -55,14 +69,31 @@ func main() {
 	{
 		api.GET("/stats", handlers.GetStats)
 		api.GET("/logs", handlers.GetLogs)
+		api.GET("/logs/export", handlers.ExportLogs)
 		api.GET("/rules", handlers.GetRules)
+		api.GET("/custom-rules", handlers.GetCustomRules)
+		api.POST("/custom-rules", handlers.CreateCustomRule)
+		api.PUT("/custom-rules/:id", handlers.UpdateCustomRule)
+		api.DELETE("/custom-rules/:id", handlers.DeleteCustomRule)
+		api.POST("/custom-rules/:id/toggle", handlers.ToggleCustomRule)
+		api.POST("/custom-rules/test-eval", handlers.TestCustomRuleSyntax)
 		api.GET("/ip-rules", handlers.GetIPRules)
 		api.POST("/ip-rules", handlers.AddIPRule)
 		api.DELETE("/ip-rules/:id", handlers.DeleteIPRule)
 		api.GET("/telegram", handlers.GetTelegram)
 		api.POST("/telegram", handlers.UpdateTelegram)
-		api.POST("/telegram/test", handlers.TestTelegram)
+		api.GET("/sites", handlers.GetSites)
+		api.POST("/sites", handlers.AddSite)
+		api.PUT("/sites/:id", handlers.UpdateSite)
+		api.DELETE("/sites/:id", handlers.DeleteSite)
+		api.POST("/sites/:id/toggle", handlers.ToggleSiteWAF)
+		api.POST("/sites/:id/ping", handlers.PingSite)
 		api.POST("/simulate-attack", handlers.SimulateAttack)
+		api.GET("/settings", handlers.GetSettings)
+		api.POST("/settings", handlers.SaveSettings)
+		api.POST("/settings/password", handlers.UpdateAdminPassword)
+		api.POST("/system/fix", handlers.SystemFix)
+		api.POST("/system/reboot", handlers.SystemReboot)
 	}
 
 	// WebSocket Live Endpoint
@@ -70,17 +101,24 @@ func main() {
 		services.HandleWebSocket(services.WSHub, c.Writer, c.Request)
 	})
 
-	// Serve Static Frontend if exists
+	// Serve Static Frontend Assets
 	frontendDir := os.Getenv("FRONTEND_DIR")
 	if frontendDir == "" {
-		frontendDir = "../frontend"
+		frontendDir = "/app/frontend"
 	}
-	if _, err := os.Stat(frontendDir); err == nil {
-		r.Static("/static", frontendDir)
-		r.NoRoute(func(c *gin.Context) {
-			c.File(filepath.Join(frontendDir, "index.html"))
-		})
-	}
+
+	r.Static("/css", filepath.Join(frontendDir, "css"))
+	r.Static("/js", filepath.Join(frontendDir, "js"))
+	r.Static("/assets", filepath.Join(frontendDir, "assets"))
+
+	r.NoRoute(func(c *gin.Context) {
+		path := filepath.Join(frontendDir, c.Request.URL.Path)
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			c.File(path)
+			return
+		}
+		c.File(filepath.Join(frontendDir, "index.html"))
+	})
 
 	port := os.Getenv("PORT")
 	if port == "" {

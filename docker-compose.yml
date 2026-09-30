@@ -32,9 +32,12 @@ services:
     ports:
       - "80:80"
     volumes:
-      - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - haproxy-config:/usr/local/etc/haproxy/config:rw
+      - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:rw
       - ./haproxy/spoe-coraza.conf:/usr/local/etc/haproxy/spoe-coraza.conf:ro
       - ./haproxy/errors:/usr/local/etc/haproxy/errors:ro
+      - ./haproxy/rules:/usr/local/etc/haproxy/rules:ro
+      - haproxy-sock:/var/run/haproxy
     depends_on:
       - coraza-spoa
       - protected-app
@@ -44,8 +47,8 @@ services:
   # 4. Go Backend Management API & aaWAF Dashboard UI
   backend:
     build:
-      context: .
-      dockerfile: ./backend/Dockerfile
+      context: ./backend
+      dockerfile: Dockerfile
     container_name: waf-backend
     restart: unless-stopped
     ports:
@@ -53,7 +56,12 @@ services:
     volumes:
       - coraza-logs:/var/log/coraza
       - backend-data:/app/data
-      - ./frontend:/app/frontend:ro
+      - ./frontend/dist:/app/frontend:ro
+      - ./haproxy/rules:/app/rules:rw
+      - ./haproxy/haproxy.cfg:/app/haproxy/haproxy.cfg:rw
+      - ./coraza-spoa/rules:/etc/coraza-spoa/rules:rw
+      - haproxy-sock:/var/run/haproxy
+      - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - PORT=8080
       - DB_PATH=/app/data/waf.db
@@ -64,6 +72,16 @@ services:
     networks:
       - waf-net
 
+  # Optional: build React UI without installing Node on the host
+  ui-builder:
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - ./frontend:/app
+    command: sh -c "npm install && npm run build"
+    profiles:
+      - build
+
 networks:
   waf-net:
     driver: bridge
@@ -71,3 +89,5 @@ networks:
 volumes:
   coraza-logs:
   backend-data:
+  haproxy-config:
+  haproxy-sock:

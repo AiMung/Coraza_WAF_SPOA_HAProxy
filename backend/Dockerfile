@@ -1,14 +1,15 @@
-FROM golang:1.22-alpine AS builder
+FROM golang:alpine AS builder
 
 RUN apk add --no-cache gcc musl-dev git
 
+ENV GOTOOLCHAIN=auto
+
 WORKDIR /app
 
-COPY go.mod ./
-# Download modules
-RUN go mod tidy || true
-
 COPY . .
+
+# Tự động tải đầy đủ thư viện và sinh go.sum
+RUN go mod tidy
 
 # Build with CGO for SQLite3 support
 RUN CGO_ENABLED=1 GOOS=linux go build -ldflags="-s -w" -o /app/server main.go
@@ -16,11 +17,11 @@ RUN CGO_ENABLED=1 GOOS=linux go build -ldflags="-s -w" -o /app/server main.go
 # Final Runtime Image
 FROM alpine:3.20
 
-RUN apk add --no-cache ca-certificates tzdata sqlite-libs
+RUN apk add --no-cache ca-certificates tzdata sqlite-libs docker-cli \
+    && mkdir -p /app/data /app/frontend /var/log/coraza
 
 WORKDIR /app
 COPY --from=builder /app/server /app/server
-COPY ../frontend /app/frontend
 
 ENV DB_PATH=/app/data/waf.db \
     AUDIT_LOG_PATH=/var/log/coraza/audit.log \

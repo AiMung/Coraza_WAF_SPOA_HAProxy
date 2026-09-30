@@ -1,6 +1,7 @@
 package services
 
 import (
+	"encoding/json"
 	"log"
 	"net/http"
 	"sync"
@@ -58,20 +59,10 @@ func (h *Hub) Run() {
 }
 
 func (h *Hub) BroadcastJSON(v interface{}) {
-	h.mu.Lock()
-	clientCount := len(h.clients)
-	h.mu.Unlock()
-	if clientCount == 0 {
-		return
+	data, err := json.Marshal(v)
+	if err == nil {
+		h.broadcast <- data
 	}
-
-	msg, err := websocket.DefaultDialer.NetDial("", "")
-	_ = msg // dummy
-	_ = err
-
-	// Broadcast via channel
-	data, _ := websocket.NewPreparedMessage(websocket.TextMessage, nil)
-	_ = data
 }
 
 func HandleWebSocket(hub *Hub, w http.ResponseWriter, r *http.Request) {
