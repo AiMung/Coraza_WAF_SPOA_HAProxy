@@ -38,6 +38,7 @@ services:
     environment:
       - TZ=Asia/Ho_Chi_Minh
     volumes:
+      - /usr/share/zoneinfo/Asia/Ho_Chi_Minh:/etc/localtime:ro
       - haproxy-config:/usr/local/etc/haproxy/config:rw
       - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:rw
       - ./haproxy/spoe-coraza.conf:/usr/local/etc/haproxy/spoe-coraza.conf:ro

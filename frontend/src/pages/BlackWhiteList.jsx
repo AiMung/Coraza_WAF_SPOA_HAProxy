@@ -9,19 +9,42 @@ const isValidIPOrCIDR = (val) => {
   return ipv4Regex.test(s) || ipv6Regex.test(s) || s === '::1';
 };
 
-// Clean timestamp formatter: HH:mm:ss · DD/MM/YYYY
+// Clean timestamp formatter: HH:mm:ss · DD/MM/YYYY (GMT+7 Hà Nội)
 const formatTimestamp = (isoStr) => {
   if (!isoStr) return '—';
   try {
-    const d = new Date(isoStr);
+    let clean = isoStr;
+    if (!clean.includes('T') && !clean.includes('Z') && !clean.includes('+')) {
+      clean = clean.replace(' ', 'T') + '+07:00';
+    }
+    const d = new Date(clean);
     if (isNaN(d.getTime())) return isoStr;
-    const pad = (n) => String(n).padStart(2, '0');
-    const time = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-    const date = `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`;
-    return `${time} · ${date}`;
+
+    const formatter = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Ho_Chi_Minh',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    });
+    const parts = formatter.formatToParts(d);
+    const getPart = (type) => parts.find((p) => p.type === type)?.value || '';
+    return `${getPart('hour')}:${getPart('minute')}:${getPart('second')} · ${getPart('day')}/${getPart('month')}/${getPart('year')}`;
   } catch {
     return isoStr;
   }
+};
+
+const parseToTime = (str) => {
+  if (!str) return 0;
+  let clean = str;
+  if (!clean.includes('T') && !clean.includes('Z') && !clean.includes('+')) {
+    clean = clean.replace(' ', 'T') + '+07:00';
+  }
+  return new Date(clean).getTime();
 };
 
 export default function BlackWhiteList({
@@ -58,7 +81,7 @@ export default function BlackWhiteList({
   const expiringSoonCount = useMemo(() => {
     return blacklistRules.filter((r) => {
       if (!r.expires_at) return false;
-      const diff = new Date(r.expires_at).getTime() - now;
+      const diff = parseToTime(r.expires_at) - now;
       return diff > 0 && diff < 3600000; // < 1 hour
     }).length;
   }, [blacklistRules, now]);
@@ -230,7 +253,7 @@ export default function BlackWhiteList({
       );
     }
 
-    const expTime = new Date(expiresAt).getTime();
+    const expTime = parseToTime(expiresAt);
     const diff = expTime - now;
 
     if (diff <= 0) {

@@ -237,12 +237,19 @@ func processAuditLog(auditLog CorazaAuditLog, isLive bool) bool {
 		}
 	}
 
-	timestampStr := txn.Timestamp
-	if timestampStr == "" {
-		timestampStr = time.Now().Format("2006-01-02 15:04:05")
+	var timestampStr string
+	if txn.UnixTimestamp > 0 {
+		t := time.Unix(0, txn.UnixTimestamp).In(VietnamLocation())
+		timestampStr = t.Format(time.RFC3339)
+	} else if txn.Timestamp != "" {
+		clean := strings.ReplaceAll(txn.Timestamp, "/", "-")
+		if t, err := time.ParseInLocation("2006-01-02 15:04:05", clean, VietnamLocation()); err == nil {
+			timestampStr = t.Format(time.RFC3339)
+		} else {
+			timestampStr = clean
+		}
 	} else {
-		// Normalize 2026/09/28 08:03:31 to 2026-09-28 15:04:05
-		timestampStr = strings.ReplaceAll(timestampStr, "/", "-")
+		timestampStr = VietnamNowRFC3339()
 	}
 
 	clientIP := txn.ClientIP

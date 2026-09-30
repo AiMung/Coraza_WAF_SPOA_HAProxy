@@ -295,6 +295,7 @@ const isValidIPOrCIDR = (val) => {
       showToast('Đã xóa quy tắc IP');
     } catch (e) {
       console.error(e);
+      showToast(String(e.message || e), 'err');
     }
   };
 

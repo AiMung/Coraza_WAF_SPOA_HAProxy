@@ -24,7 +24,33 @@ func isValidIPOrCIDR(s string) bool {
 	return err == nil
 }
 
-var ipSyncMu sync.Mutex
+var (
+	ipSyncMu   sync.Mutex
+	vnLocation *time.Location
+)
+
+func init() {
+	loc, err := time.LoadLocation("Asia/Ho_Chi_Minh")
+	if err != nil {
+		loc = time.FixedZone("GMT+7", 7*3600)
+	}
+	vnLocation = loc
+}
+
+func VietnamLocation() *time.Location {
+	if vnLocation == nil {
+		return time.FixedZone("GMT+7", 7*3600)
+	}
+	return vnLocation
+}
+
+func VietnamNow() time.Time {
+	return time.Now().In(VietnamLocation())
+}
+
+func VietnamNowRFC3339() string {
+	return VietnamNow().Format(time.RFC3339)
+}
 
 // ParseDurationToExpiration parses user friendly duration string to a future Time
 // Supported: "15m", "30m", "1h", "6h", "12h", "24h", "1d", "7d", "permanent"
@@ -51,7 +77,7 @@ func ParseDurationToExpiration(dur string) *time.Time {
 		return nil
 	}
 
-	exp := time.Now().Add(d)
+	exp := VietnamNow().Add(d)
 	return &exp
 }
 
@@ -64,14 +90,16 @@ func SyncIPRulesToFile() error {
 		return nil
 	}
 
+	nowRFC := VietnamNowRFC3339()
+
 	// 1. Query Active Blacklist (non-expired)
 	blackQuery := `
 		SELECT ip FROM ip_rules 
 		WHERE rule_type = 'blacklist' 
-		  AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
+		  AND (expires_at IS NULL OR expires_at > ?)
 		ORDER BY id DESC
 	`
-	blackRows, err := database.DB.Query(blackQuery)
+	blackRows, err := database.DB.Query(blackQuery, nowRFC)
 	if err != nil {
 		return fmt.Errorf("failed to query blacklist: %w", err)
 	}
@@ -173,9 +201,11 @@ func StartIPRulesExpirationDaemon() {
 				continue
 			}
 
+			nowRFC := VietnamNowRFC3339()
 			// Find expired blacklist rules
 			rows, err := database.DB.Query(
-				"SELECT id, ip FROM ip_rules WHERE rule_type = 'blacklist' AND expires_at IS NOT NULL AND expires_at <= CURRENT_TIMESTAMP",
+				"SELECT id, ip FROM ip_rules WHERE rule_type = 'blacklist' AND expires_at IS NOT NULL AND expires_at <= ?",
+				nowRFC,
 			)
 			if err != nil {
 				continue

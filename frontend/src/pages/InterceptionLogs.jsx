@@ -198,20 +198,15 @@ export default function InterceptionLogs({
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(15); // 15, 30, 50, 100
 
-  // Accurate timestamp formatter
+  // Accurate Vietnam GMT+7 timestamp formatter
   const formatTimestamp = (ts) => {
     if (!ts) return { full: 'N/A', relative: '' };
     try {
-      let d;
-      if (ts.endsWith('Z')) {
-        d = new Date(ts);
-      } else if (ts.includes('T')) {
-        d = new Date(ts.endsWith('Z') ? ts : ts + 'Z');
-      } else {
-        const clean = ts.replace(/\//g, '-');
-        d = new Date(clean + 'Z');
+      let clean = ts;
+      if (!clean.includes('T') && !clean.includes('Z') && !clean.includes('+')) {
+        clean = clean.replace(/\//g, '-').replace(' ', 'T') + '+07:00';
       }
-
+      let d = new Date(clean);
       if (isNaN(d.getTime())) {
         d = new Date(ts);
       }
@@ -229,15 +224,19 @@ export default function InterceptionLogs({
         rel = `${Math.floor(diffSec / 86400)}d trước`;
       }
 
-      const pad = (n) => String(n).padStart(2, '0');
-      const year = d.getFullYear();
-      const month = pad(d.getMonth() + 1);
-      const day = pad(d.getDate());
-      const hours = pad(d.getHours());
-      const mins = pad(d.getMinutes());
-      const secs = pad(d.getSeconds());
-
-      const fullFormatted = `${year}-${month}-${day} ${hours}:${mins}:${secs}`;
+      const formatter = new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Asia/Ho_Chi_Minh',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+      });
+      const parts = formatter.formatToParts(d);
+      const getPart = (type) => parts.find((p) => p.type === type)?.value || '';
+      const fullFormatted = `${getPart('year')}-${getPart('month')}-${getPart('day')} ${getPart('hour')}:${getPart('minute')}:${getPart('second')}`;
       return { full: fullFormatted, relative: rel };
     } catch (e) {
       return { full: ts, relative: 'Gần đây' };
@@ -270,7 +269,11 @@ export default function InterceptionLogs({
     return uniqueLogs.filter((log) => {
       // Time filter
       if (timeFilter !== 'all') {
-        const logDate = new Date(log.timestamp);
+        let clean = log.timestamp;
+        if (clean && !clean.includes('T') && !clean.includes('Z') && !clean.includes('+')) {
+          clean = clean.replace(/\//g, '-').replace(' ', 'T') + '+07:00';
+        }
+        const logDate = new Date(clean);
         const now = new Date();
         const diffHours = (now - logDate) / (1000 * 60 * 60);
 
@@ -400,7 +403,7 @@ export default function InterceptionLogs({
       if (!l.timestamp) return;
       let tStr = l.timestamp;
       if (!tStr.endsWith('Z') && !tStr.includes('+')) {
-        tStr = tStr.replace(' ', 'T') + 'Z';
+        tStr = tStr.replace(' ', 'T') + '+07:00';
       }
       const logMs = new Date(tStr).getTime();
       if (isNaN(logMs)) return;

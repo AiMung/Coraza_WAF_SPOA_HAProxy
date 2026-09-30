@@ -49,6 +49,7 @@ export const wafApi = {
   saveTelegram: (cfg) => apiSend('/telegram', 'POST', cfg),
   testTelegram: () => apiSend('/telegram/test', 'POST'),
   addIpRule: (payload) => apiSend('/ip-rules', 'POST', payload),
+  deleteIpRule: (id) => apiSend(`/ip-rules/${id}`, 'DELETE'),
   sites: () => apiGet('/sites'),
   addSite: (payload) => apiSend('/sites', 'POST', payload),
   updateSite: (id, payload) => apiSend(`/sites/${id}`, 'PUT', payload),
