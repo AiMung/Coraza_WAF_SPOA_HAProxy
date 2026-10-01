@@ -88,6 +88,7 @@ func main() {
 		api.POST("/telegram", handlers.UpdateTelegram)
 		api.POST("/telegram/test", handlers.TestTelegram)
 		api.POST("/telegram/verify", handlers.VerifyTelegramToken)
+		api.GET("/telegram/detect-chat-id", handlers.DetectTelegramChatID)
 		api.GET("/bot-defense", handlers.GetBotDefense)
 		api.POST("/bot-defense", handlers.SaveBotDefense)
 		api.POST("/challenge/verify", handlers.VerifyChallenge)

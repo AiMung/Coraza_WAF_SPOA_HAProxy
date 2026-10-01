@@ -8,6 +8,7 @@ export default function TelegramSettings({ telegramConfig, onSave, onTest }) {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [verifying, setVerifying] = useState(false);
+  const [detecting, setDetecting] = useState(false);
   const [testResult, setTestResult] = useState(null);
   const [botInfo, setBotInfo] = useState(null);
 
@@ -69,6 +70,34 @@ export default function TelegramSettings({ telegramConfig, onSave, onTest }) {
       setTestResult({ ok: false, msg: 'Lỗi kiểm tra token: ' + (err.message || err) });
     } finally {
       setVerifying(false);
+    }
+  };
+
+  const handleDetectChatId = async () => {
+    if (!token.trim()) {
+      setTestResult({ ok: false, msg: 'Vui lòng nhập Bot Token trước khi tìm Chat ID.' });
+      return;
+    }
+    setDetecting(true);
+    setTestResult(null);
+    try {
+      const res = await wafApi.detectTelegramChatId(token.trim());
+      if (res && res.found) {
+        setChatId(res.chat_id);
+        setTestResult({
+          ok: true,
+          msg: `🎉 Thành công! Đã tự động nhận diện Chat ID: ${res.chat_id} (${res.first_name || res.username || 'Người dùng'})`,
+        });
+      } else {
+        setTestResult({
+          ok: false,
+          msg: res?.message || 'Chưa tìm thấy tin nhắn. Bạn hãy mở bot trên Telegram và bấm START trước nhé!',
+        });
+      }
+    } catch (err) {
+      setTestResult({ ok: false, msg: 'Lỗi phát hiện Chat ID: ' + (err.message || err) });
+    } finally {
+      setDetecting(false);
     }
   };
 
@@ -310,27 +339,60 @@ export default function TelegramSettings({ telegramConfig, onSave, onTest }) {
                 <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 700, color: '#334155', marginBottom: '6px' }}>
                   Chat ID / Group ID <span style={{ color: '#ef4444' }}>*</span>
                 </label>
-                <input
-                  type="text"
-                  placeholder="VD: 123456789 (Cá nhân) hoặc -1001234567890 (Nhóm)"
-                  value={chatId}
-                  onChange={(e) => setChatId(e.target.value)}
-                  style={{
-                    width: '100%',
-                    height: '38px',
-                    padding: '0 12px',
-                    borderRadius: '8px',
-                    border: '1px solid #cbd5e1',
-                    fontSize: '12.5px',
-                    fontFamily: 'monospace',
-                  }}
-                />
-                <div style={{ fontSize: '11px', color: '#64748b', marginTop: '4px' }}>
-                  Lấy Chat ID cá nhân nhanh bằng bot{' '}
-                  <a href="https://t.me/userinfobot" target="_blank" rel="noreferrer" style={{ color: '#0284c7', fontWeight: 600 }}>
-                    @userinfobot
-                  </a>
-                  . Đối với Group, thêm Bot vào nhóm rồi gửi tin nhắn bất kỳ.
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <input
+                    type="text"
+                    placeholder="VD: 123456789 (Cá nhân) hoặc -1001234567890 (Nhóm)"
+                    value={chatId}
+                    onChange={(e) => setChatId(e.target.value)}
+                    style={{
+                      flex: 1,
+                      height: '38px',
+                      padding: '0 12px',
+                      borderRadius: '8px',
+                      border: '1px solid #cbd5e1',
+                      fontSize: '12.5px',
+                      fontFamily: 'monospace',
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={handleDetectChatId}
+                    disabled={detecting}
+                    style={{
+                      height: '38px',
+                      padding: '0 14px',
+                      borderRadius: '8px',
+                      border: '1px solid #10b981',
+                      background: '#f0fdf4',
+                      color: '#047857',
+                      fontSize: '12px',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      whiteSpace: 'nowrap',
+                    }}
+                    title="Tự động phát hiện Chat ID từ tin nhắn START bạn vừa gửi cho Bot"
+                  >
+                    <i className={`fa-solid ${detecting ? 'fa-spinner fa-spin' : 'fa-wand-magic-sparkles'}`}></i>
+                    {detecting ? 'Đang dò...' : 'Tự Động Lấy Chat ID'}
+                  </button>
+                </div>
+                <div style={{ fontSize: '11px', color: '#64748b', marginTop: '4px', lineHeight: 1.5 }}>
+                  💡 <strong>Bước 1:</strong> Mở Telegram, bấm vào{' '}
+                  <a
+                    href={botInfo ? `https://t.me/${botInfo.username}` : 'https://t.me/ITDLUPanel_alert_bot'}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ color: '#0284c7', fontWeight: 700 }}
+                  >
+                    {botInfo ? `@${botInfo.username}` : '@ITDLUPanel_alert_bot'}
+                  </a>{' '}
+                  rồi bấm <strong>START</strong> (hoặc gõ <code>/start</code>).
+                  <br />
+                  💡 <strong>Bước 2:</strong> Bấm nút <strong>"Tự Động Lấy Chat ID"</strong> ở trên để hệ thống tự điền ID của bạn!
                 </div>
               </div>
 

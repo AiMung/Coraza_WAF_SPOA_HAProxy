@@ -54,6 +54,7 @@ export const wafApi = {
   saveTelegram: (cfg) => apiSend('/telegram', 'POST', cfg),
   testTelegram: () => apiSend('/telegram/test', 'POST'),
   verifyTelegram: (bot_token) => apiSend('/telegram/verify', 'POST', { bot_token }),
+  detectTelegramChatId: (token) => apiGet('/telegram/detect-chat-id' + (token ? '?token=' + encodeURIComponent(token) : '')),
   botDefense: () => apiGet('/bot-defense'),
   saveBotDefense: (payload) => apiSend('/bot-defense', 'POST', payload),
   addIpRule: (payload) => apiSend('/ip-rules', 'POST', payload),

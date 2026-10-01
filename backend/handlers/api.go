@@ -821,6 +821,88 @@ func VerifyTelegramToken(c *gin.Context) {
 	})
 }
 
+// GET /api/telegram/detect-chat-id - Auto-detects Chat ID from latest /start or message to the bot
+func DetectTelegramChatID(c *gin.Context) {
+	token := strings.TrimSpace(c.Query("token"))
+	if token == "" {
+		cfg := services.GetTelegramConfig()
+		token = cfg.BotToken
+	}
+	if token == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"found": false, "error": "Chưa có Bot Token"})
+		return
+	}
+
+	url := fmt.Sprintf("https://api.telegram.org/bot%s/getUpdates?limit=5", token)
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"found": false, "error": "Không thể kết nối Telegram: " + err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+
+	var tgRes struct {
+		OK     bool `json:"ok"`
+		Result []struct {
+			UpdateID int `json:"update_id"`
+			Message  struct {
+				MessageID int `json:"message_id"`
+				Chat      struct {
+					ID        int64  `json:"id"`
+					FirstName string `json:"first_name"`
+					Username  string `json:"username"`
+					Type      string `json:"type"`
+					Title     string `json:"title"`
+				} `json:"chat"`
+				From struct {
+					ID        int64  `json:"id"`
+					FirstName string `json:"first_name"`
+					Username  string `json:"username"`
+				} `json:"from"`
+				Text string `json:"text"`
+			} `json:"message"`
+		} `json:"result"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&tgRes); err != nil {
+		c.JSON(http.StatusOK, gin.H{"found": false, "error": "Dữ liệu trả về từ Telegram không hợp lệ"})
+		return
+	}
+
+	if !tgRes.OK || len(tgRes.Result) == 0 {
+		c.JSON(http.StatusOK, gin.H{
+			"found": false,
+			"message": "Chưa phát hiện tin nhắn nào gửi tới bot. Bạn hãy mở Telegram, tìm bot và bấm 'START' hoặc gửi 1 tin nhắn bất kỳ trước nhé!",
+		})
+		return
+	}
+
+	// Extract the most recent message
+	latest := tgRes.Result[len(tgRes.Result)-1].Message
+	chatID := strconv.FormatInt(latest.Chat.ID, 10)
+	name := latest.Chat.FirstName
+	if name == "" {
+		name = latest.Chat.Title
+	}
+	if name == "" {
+		name = latest.From.FirstName
+	}
+	username := latest.Chat.Username
+	if username == "" {
+		username = latest.From.Username
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"found":      true,
+		"chat_id":    chatID,
+		"first_name": name,
+		"username":   username,
+		"chat_type":  latest.Chat.Type,
+		"message":    fmt.Sprintf("Đã tìm thấy Chat ID: %s (Người dùng: %s)", chatID, name),
+	})
+}
+
 func SimulateAttack(c *gin.Context) {
 	attackType := c.DefaultQuery("type", "sqli")
 
