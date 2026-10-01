@@ -59,6 +59,7 @@ export const wafApi = {
   toggleSiteWAF: (id, payload = {}) => apiSend(`/sites/${id}/toggle`, 'POST', payload),
   pingSite: (id) => apiSend(`/sites/${id}/ping`, 'POST'),
   testWAFSite: (id) => apiSend(`/sites/${id}/test-waf`, 'POST'),
+  pingUpstream: (target) => apiSend('/sites/ping-upstream', 'POST', { target }),
   simulate: (type = 'sqli') => apiSend(`/simulate-attack?type=${encodeURIComponent(type)}`, 'POST'),
   systemFix: () => apiSend('/system/fix', 'POST'),
   systemReboot: () => apiSend('/system/reboot', 'POST'),

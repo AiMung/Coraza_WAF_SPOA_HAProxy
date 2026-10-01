@@ -68,12 +68,17 @@ func pingTarget(target string) (string, int, int64, string) {
 func fetchHAProxyStats() map[string]int64 {
 	stats := make(map[string]int64)
 
-	// Try internal docker hostname first, then localhost fallback
-	targets := []string{"http://haproxy:8404/;csv", "http://127.0.0.1:8404/;csv"}
+	// HAProxy stats CSV endpoint — use /stats;csv path (the /;csv path has semicolon
+	// parsing issues in Go's http.Client which treats ';' as a query parameter separator)
+	targets := []string{
+		"http://haproxy:8404/stats;csv",       // Docker internal hostname
+		"http://172.17.0.1:8404/stats;csv",    // Docker bridge gateway fallback
+		"http://127.0.0.1:8404/stats;csv",     // Localhost fallback
+	}
 	var resp *http.Response
 	var err error
 
-	client := http.Client{Timeout: 1 * time.Second}
+	client := http.Client{Timeout: 2 * time.Second}
 	for _, target := range targets {
 		resp, err = client.Get(target)
 		if err == nil && resp.StatusCode == http.StatusOK {
@@ -487,4 +492,23 @@ func TestWAFSite(c *gin.Context) {
 		"tested_at":       time.Now().Format("2006-01-02 15:04:05"),
 	})
 }
+// POST /api/sites/ping-upstream — Test TCP reachability of an arbitrary upstream target (used by Add/Edit modal)
+func PingUpstreamTarget(c *gin.Context) {
+	var payload struct {
+		Target string `json:"target" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Vui lòng cung cấp địa chỉ máy chủ đích (target)"})
+		return
+	}
 
+	status, statusCode, latency, msg := pingTarget(strings.TrimSpace(payload.Target))
+	c.JSON(http.StatusOK, gin.H{
+		"target":      payload.Target,
+		"status":      status,
+		"status_code": statusCode,
+		"latency_ms":  latency,
+		"message":     msg,
+		"checked_at":  time.Now().Format("2006-01-02 15:04:05"),
+	})
+}

@@ -204,15 +204,19 @@ export default function WebsiteList({ stats = {} }) {
     }
     setModalPingLoading(true);
     setFormError('');
+    setModalPingResult(null);
     try {
-      // Simulate pinging target using raw probe
-      const res = await wafApi.sites();
+      // Real TCP ping to the upstream target via backend API
+      const res = await wafApi.pingUpstream(formData.upstream_target.trim());
       setModalPingResult({
-        status: 'up',
-        message: 'Định dạng hợp lệ, sẵn sàng kiểm tra định tuyến',
+        status: res.status,
+        latency: res.latency_ms,
+        message: res.status === 'up'
+          ? `✅ Kết nối thành công! Độ trễ TCP: ${res.latency_ms}ms — Máy chủ đang hoạt động.`
+          : `❌ Không thể kết nối: ${res.message}`,
       });
     } catch (err) {
-      setModalPingResult({ status: 'down', message: err.message });
+      setModalPingResult({ status: 'down', message: `❌ Lỗi kiểm tra: ${err.message}` });
     } finally {
       setModalPingLoading(false);
     }
@@ -562,6 +566,32 @@ export default function WebsiteList({ stats = {} }) {
                 </p>
               </div>
             </div>
+
+            {/* LAN Demo Scenario */}
+            <div style={{ marginTop: '14px', background: '#0f172a', borderRadius: '10px', padding: '16px 18px', color: '#f1f5f9' }}>
+              <div style={{ fontSize: '12px', fontWeight: 700, color: '#34d399', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <i className="fa-solid fa-flask"></i>
+                Kịch Bản Demo: Bảo Vệ Website trong Mạng LAN Nội Bộ
+              </div>
+              <div style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '11px', color: '#94a3b8', lineHeight: 1.8 }}>
+                <div style={{ color: '#64748b', marginBottom: '6px' }}># Ví dụ: Bảo vệ web app ERP chạy tại 192.168.1.50:8080 trong mạng nội bộ</div>
+                <div><span style={{ color: '#f59e0b' }}>Domain:    </span><span style={{ color: '#34d399' }}>erp.company.vn</span><span style={{ color: '#64748b' }}>  (trỏ DNS A → 192.168.246.100 = IP máy WAF)</span></div>
+                <div><span style={{ color: '#f59e0b' }}>Upstream:  </span><span style={{ color: '#60a5fa' }}>192.168.1.50:8080</span><span style={{ color: '#64748b' }}>  (IP server ERP trong LAN, ẩn hoàn toàn với internet)</span></div>
+                <div><span style={{ color: '#f59e0b' }}>WAF Mode:  </span><span style={{ color: '#10b981' }}>Prevention</span><span style={{ color: '#64748b' }}>  (chặn đứng SQLi/XSS/LFI bằng 403)</span></div>
+                <div style={{ marginTop: '10px', color: '#64748b' }}># Luồng request thực tế:</div>
+                <div>
+                  <span style={{ color: '#fbbf24' }}>[Internet / Kẻ tấn công]</span>
+                  <span style={{ color: '#475569' }}> → </span>
+                  <span style={{ color: '#34d399' }}>[WAF HAProxy :80]</span>
+                  <span style={{ color: '#475569' }}> → </span>
+                  <span style={{ color: '#60a5fa' }}>[Coraza SPOA :9000]</span>
+                  <span style={{ color: '#475569' }}> → </span>
+                  <span style={{ color: '#a78bfa' }}>[ERP Server :8080 LAN]</span>
+                </div>
+                <div style={{ marginTop: '6px', color: '#64748b' }}># Demo nhanh: Bắn XSS payload qua WAF (Test WAF button)</div>
+                <div><span style={{ color: '#f87171' }}>curl -A "sqlmap/1.6" http://erp.company.vn/</span><span style={{ color: '#64748b' }}> → 403 Forbidden (X-Blocked-By: aaWAF-Scanner-Shield)</span></div>
+              </div>
+            </div>
           </div>
         )}
       </div>
@@ -808,18 +838,44 @@ export default function WebsiteList({ stats = {} }) {
                         </div>
                       </td>
 
-                      {/* Valid Requests */}
+                      {/* Valid Requests (Lưu Lượng Hợp Lệ) */}
                       <td style={{ ...tdStyle, textAlign: 'center' }}>
-                        <span style={{ fontWeight: 700, color: '#15803d', fontFamily: 'var(--font-mono, monospace)', fontSize: '12px' }}>
-                          {valid.toLocaleString()}
-                        </span>
+                        <div title={`${valid.toLocaleString()} requests hợp lệ đã chuyển tiếp đến máy chủ origin`}>
+                          <span style={{ fontWeight: 700, color: '#15803d', fontFamily: 'var(--font-mono, monospace)', fontSize: '12px' }}>
+                            {valid > 0 ? valid.toLocaleString() : <span style={{ color: '#cbd5e1' }}>—</span>}
+                          </span>
+                          {valid > 0 && (
+                            <div style={{ width: '100%', height: '3px', background: '#e2e8f0', borderRadius: '2px', marginTop: '4px' }}>
+                              <div style={{
+                                width: `${Math.min(100, (valid / Math.max(1, valid + blocked)) * 100)}%`,
+                                height: '3px',
+                                background: '#10b981',
+                                borderRadius: '2px',
+                                transition: 'width 0.5s ease',
+                              }} />
+                            </div>
+                          )}
+                        </div>
                       </td>
 
                       {/* Blocked Attacks */}
                       <td style={{ ...tdStyle, textAlign: 'center' }}>
-                        <span style={{ fontWeight: 800, color: blocked > 0 ? '#dc2626' : '#94a3b8', fontFamily: 'var(--font-mono, monospace)', fontSize: '12px' }}>
-                          {blocked.toLocaleString()}
-                        </span>
+                        <div title={`${blocked.toLocaleString()} tấn công đã bị WAF chặn đứng`}>
+                          <span style={{ fontWeight: 800, color: blocked > 0 ? '#dc2626' : '#94a3b8', fontFamily: 'var(--font-mono, monospace)', fontSize: '12px' }}>
+                            {blocked > 0 ? blocked.toLocaleString() : <span style={{ color: '#cbd5e1' }}>0</span>}
+                          </span>
+                          {blocked > 0 && (
+                            <div style={{ width: '100%', height: '3px', background: '#fee2e2', borderRadius: '2px', marginTop: '4px' }}>
+                              <div style={{
+                                width: `${Math.min(100, (blocked / Math.max(1, valid + blocked)) * 100)}%`,
+                                height: '3px',
+                                background: '#ef4444',
+                                borderRadius: '2px',
+                                transition: 'width 0.5s ease',
+                              }} />
+                            </div>
+                          )}
+                        </div>
                       </td>
 
                       {/* Ping Latency */}
