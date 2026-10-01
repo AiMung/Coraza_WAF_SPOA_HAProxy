@@ -9,7 +9,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -139,31 +138,42 @@ func SendTelegramMessageWithKeyboard(token, chatID, message string, markup *Inli
 		return fmt.Errorf("bot token or chat ID is empty")
 	}
 
-	url := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", token)
-	payload := TelegramSendPayload{
-		ChatID:      chatID,
-		Text:        message,
-		ParseMode:   "HTML",
-		ReplyMarkup: markup,
-	}
-
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-
+	targets := strings.Split(chatID, ",")
+	var lastErr error
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Post(url, "application/json", bytes.NewBuffer(body))
-	if err != nil {
-		return fmt.Errorf("failed to send telegram request: %w", err)
-	}
-	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("telegram API returned status: %d", resp.StatusCode)
+	for _, target := range targets {
+		target = strings.TrimSpace(target)
+		if target == "" {
+			continue
+		}
+
+		url := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", token)
+		payload := TelegramSendPayload{
+			ChatID:      target,
+			Text:        message,
+			ParseMode:   "HTML",
+			ReplyMarkup: markup,
+		}
+
+		body, err := json.Marshal(payload)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		resp, err := client.Post(url, "application/json", bytes.NewBuffer(body))
+		if err != nil {
+			lastErr = fmt.Errorf("failed to send telegram request to %s: %w", target, err)
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			lastErr = fmt.Errorf("telegram API returned status %d for chat %s", resp.StatusCode, target)
+		}
+		resp.Body.Close()
 	}
 
-	return nil
+	return lastErr
 }
 
 func answerCallbackQuery(token, queryID, text string) {
@@ -241,27 +251,46 @@ func SendAttackAlert(logItem database.AttackLog) {
 	}()
 }
 
+var (
+	globalBotOffset int64
+	runningToken    string
+)
+
 // RestartTelegramBot restarts the poller with current config
 func RestartTelegramBot() {
 	botMu.Lock()
 	defer botMu.Unlock()
 
-	if botCancelCtx != nil {
-		botCancelCtx()
-		botCancelCtx = nil
-	}
-	botRunning = false
-
 	tgMu.RLock()
 	cfg := tgConfig
 	tgMu.RUnlock()
 
-	if cfg.Enabled && cfg.BotToken != "" {
-		ctx, cancel := context.WithCancel(context.Background())
-		botCancelCtx = cancel
-		botRunning = true
-		go runTelegramPoller(ctx, cfg.BotToken)
+	// If disabled or empty token, shut down poller
+	if !cfg.Enabled || cfg.BotToken == "" {
+		if botCancelCtx != nil {
+			botCancelCtx()
+			botCancelCtx = nil
+		}
+		botRunning = false
+		runningToken = ""
+		return
 	}
+
+	// If already running with the same token, don't restart poller
+	if botRunning && runningToken == cfg.BotToken {
+		return
+	}
+
+	// Token changed or starting new poller
+	if botCancelCtx != nil {
+		botCancelCtx()
+		botCancelCtx = nil
+	}
+	botRunning = true
+	runningToken = cfg.BotToken
+	ctx, cancel := context.WithCancel(context.Background())
+	botCancelCtx = cancel
+	go runTelegramPoller(ctx, cfg.BotToken)
 }
 
 // StartTelegramBot initializes the interactive long-polling loop
@@ -273,7 +302,6 @@ func StartTelegramBot() {
 func runTelegramPoller(ctx context.Context, token string) {
 	log.Printf("[Telegram Bot] Interactive listener started.")
 	client := &http.Client{Timeout: 30 * time.Second}
-	var offset int64 = 0
 
 	for {
 		select {
@@ -283,16 +311,16 @@ func runTelegramPoller(ctx context.Context, token string) {
 		default:
 		}
 
-		url := fmt.Sprintf("https://api.telegram.org/bot%s/getUpdates?offset=%d&timeout=15", token, offset)
+		url := fmt.Sprintf("https://api.telegram.org/bot%s/getUpdates?offset=%d&timeout=15", token, globalBotOffset)
 		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 		if err != nil {
-			time.Sleep(3 * time.Second)
+			time.Sleep(2 * time.Second)
 			continue
 		}
 
 		resp, err := client.Do(req)
 		if err != nil {
-			time.Sleep(3 * time.Second)
+			time.Sleep(2 * time.Second)
 			continue
 		}
 
@@ -303,8 +331,8 @@ func runTelegramPoller(ctx context.Context, token string) {
 
 		if err := json.NewDecoder(resp.Body).Decode(&updateResp); err == nil && updateResp.Ok {
 			for _, u := range updateResp.Result {
-				if u.UpdateID >= offset {
-					offset = u.UpdateID + 1
+				if u.UpdateID >= globalBotOffset {
+					globalBotOffset = u.UpdateID + 1
 				}
 
 				if u.Message != nil {
@@ -325,58 +353,26 @@ func isAuthorizedChat(senderChatID int64) bool {
 	configuredChatID := tgConfig.ChatID
 	tgMu.RUnlock()
 
+	configuredChatID = strings.TrimSpace(configuredChatID)
 	if configuredChatID == "" {
 		return true // Allow initial pairing
 	}
 
-	configuredInt, err := strconv.ParseInt(configuredChatID, 10, 64)
-	if err == nil && configuredInt == senderChatID {
-		return true
+	senderStr := fmt.Sprintf("%d", senderChatID)
+	parts := strings.Split(configuredChatID, ",")
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" && p == senderStr {
+			return true
+		}
 	}
 
-	return strings.TrimSpace(configuredChatID) == fmt.Sprintf("%d", senderChatID)
+	return false
 }
 
 func handleTelegramMessage(token string, chatID int64, text string) {
 	text = strings.TrimSpace(text)
 	chatIDStr := fmt.Sprintf("%d", chatID)
-
-	tgMu.RLock()
-	currentChatID := tgConfig.ChatID
-	tgMu.RUnlock()
-
-	// If no chat ID has been configured yet, automatically pair and save this chat/group!
-	if currentChatID == "" {
-		log.Printf("[Telegram Bot] Auto-pairing with chat ID: %s", chatIDStr)
-		_ = SaveTelegramConfig(database.TelegramConfig{
-			BotToken: token,
-			ChatID:   chatIDStr,
-			Enabled:  true,
-		})
-		welcomeMsg := fmt.Sprintf(
-			"🎉 <b>[CORAZA WAF — KẾT NỐI NHÓM THÀNH CÔNG]</b>\n\n"+
-				"• <b>Đã liên kết kênh:</b> <code>%s</code>\n"+
-				"• <b>Trạng thái:</b> 🟢 <b>ACTIVE / HEALTHY</b>\n\n"+
-				"Nhóm này đã được kích hoạt nhận cảnh báo tấn công tự động từ Coraza WAF.\n"+
-				"Gõ <code>/help</code> hoặc <code>/stats</code> để kiểm tra các lệnh điều khiển.",
-			chatIDStr,
-		)
-		_ = SendTelegramMessage(token, chatIDStr, welcomeMsg)
-		return
-	}
-
-	// Check authorization
-	if !isAuthorizedChat(chatID) {
-		msg := fmt.Sprintf(
-			"⚠️ <b>Quyền truy cập bị từ chối!</b>\n\n"+
-				"Chat ID của bạn: <code>%d</code>\n"+
-				"Chat ID này chưa được cấp phép trong hệ thống Coraza WAF Dashboard.\n"+
-				"Vui lòng vào <b>Dashboard -> Cài đặt Telegram</b> và nhập Chat ID trên để kích hoạt quản trị.",
-			chatID,
-		)
-		_ = SendTelegramMessage(token, chatIDStr, msg)
-		return
-	}
 
 	parts := strings.Fields(text)
 	if len(parts) == 0 {
@@ -387,6 +383,89 @@ func handleTelegramMessage(token string, chatID int64, text string) {
 	// Strip bot username if invoked as /stats@MyBot
 	if atIdx := strings.Index(cmd, "@"); atIdx != -1 {
 		cmd = cmd[:atIdx]
+	}
+
+	// Always handle /id, /chatid, /info command for ANY user or group to discover Chat ID
+	if cmd == "/id" || cmd == "/chatid" || cmd == "/info" {
+		chatType := "👤 Cá nhân (Private Chat)"
+		if chatID < 0 {
+			chatType = "👥 Nhóm (Group / Supergroup)"
+		}
+		replyMsg := fmt.Sprintf(
+			"🆔 <b>THÔNG TIN KÊNH TELEGRAM</b>\n\n"+
+				"• <b>Chat ID:</b> <code>%d</code>\n"+
+				"• <b>Phân loại:</b> %s\n\n"+
+				"💡 <i>Bạn hãy copy Chat ID trên dán vào <b>Dashboard -> Cài Đặt Telegram</b>. Có thể nhập nhiều ID cách nhau bằng dấu phẩy (VD: <code>%d, [ID_Khác]</code>) để bot vừa gửi cảnh báo vào Nhóm vừa gửi tin nhắn riêng cho bạn!</i>\n\n"+
+				"Hoặc gõ lệnh <code>/link</code> ngay tại đây để tự động kích hoạt kênh này vào danh sách nhận tin!",
+			chatID, chatType, chatID,
+		)
+		_ = SendTelegramMessage(token, chatIDStr, replyMsg)
+		return
+	}
+
+	// Command /link: Immediately auto-links this group/chat to the system
+	if cmd == "/link" || cmd == "/pair" {
+		tgMu.Lock()
+		cur := strings.TrimSpace(tgConfig.ChatID)
+		if cur == "" {
+			tgConfig.ChatID = chatIDStr
+		} else if !strings.Contains(cur, chatIDStr) {
+			tgConfig.ChatID = cur + ", " + chatIDStr
+		}
+		newCfg := tgConfig
+		newCfg.Enabled = true
+		tgMu.Unlock()
+		_ = SaveTelegramConfig(newCfg)
+
+		replyMsg := fmt.Sprintf(
+			"🎉 <b>[LIÊN KẾT KÊNH THÀNH CÔNG]</b>\n\n"+
+				"• <b>Kênh vừa liên kết:</b> <code>%d</code>\n"+
+				"• <b>Danh sách Chat ID kích hoạt:</b> <code>%s</code>\n"+
+				"• <b>Trạng thái:</b> 🟢 <b>ACTIVE / BROADCASTING</b>\n\n"+
+				"Kênh này đã được lưu vào hệ thống Coraza WAF! Bot sẽ gửi cảnh báo tấn công và nhận lệnh điều khiển tại đây.\n"+
+				"Gõ <code>/help</code> hoặc <code>/stats</code> để kiểm tra các lệnh điều khiển.",
+			chatID, newCfg.ChatID,
+		)
+		_ = SendTelegramMessage(token, chatIDStr, replyMsg)
+		return
+	}
+
+	tgMu.RLock()
+	currentChatID := tgConfig.ChatID
+	tgMu.RUnlock()
+
+	// If no chat ID has been configured yet, automatically pair with this first chat
+	if strings.TrimSpace(currentChatID) == "" {
+		log.Printf("[Telegram Bot] Auto-pairing with chat ID: %s", chatIDStr)
+		_ = SaveTelegramConfig(database.TelegramConfig{
+			BotToken: token,
+			ChatID:   chatIDStr,
+			Enabled:  true,
+		})
+		welcomeMsg := fmt.Sprintf(
+			"🎉 <b>[CORAZA WAF — KẾT NỐI KÊNH THÀNH CÔNG]</b>\n\n"+
+				"• <b>Đã liên kết kênh:</b> <code>%s</code>\n"+
+				"• <b>Trạng thái:</b> 🟢 <b>ACTIVE / HEALTHY</b>\n\n"+
+				"Kênh này đã được kích hoạt nhận cảnh báo tấn công tự động từ Coraza WAF.\n"+
+				"Gõ <code>/help</code> hoặc <code>/stats</code> để kiểm tra các lệnh điều khiển.",
+			chatIDStr,
+		)
+		_ = SendTelegramMessage(token, chatIDStr, welcomeMsg)
+		return
+	}
+
+	// Check authorization
+	if !isAuthorizedChat(chatID) {
+		msg := fmt.Sprintf(
+			"⚠️ <b>Kênh chưa được cấp phép!</b>\n\n"+
+				"Chat ID của bạn: <code>%d</code>\n\n"+
+				"Để kích hoạt kênh này nhận cảnh báo và gửi lệnh điều khiển WAF, bạn có thể:\n"+
+				"1. Gõ lệnh <code>/link</code> ngay tại đây để tự động liên kết.\n"+
+				"2. Hoặc copy ID <code>%d</code> dán vào <b>Dashboard -> Cài Đặt Telegram</b>.",
+			chatID, chatID,
+		)
+		_ = SendTelegramMessage(token, chatIDStr, msg)
+		return
 	}
 
 	switch cmd {
