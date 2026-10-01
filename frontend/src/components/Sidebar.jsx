@@ -7,7 +7,7 @@ export default function Sidebar({ activeTab, setActiveTab, totalBlocked = 0 }) {
     { id: 'logs', icon: 'fa-solid fa-file-shield', label: 'Interception log', badge: totalBlocked },
     { id: 'ip-control', icon: 'fa-solid fa-user-shield', label: 'Black/white list' },
     { id: 'rules', icon: 'fa-solid fa-pen-ruler', label: 'Custom rules' },
-    { id: 'bot', icon: 'fa-solid fa-robot', label: 'Recaptcha' },
+    { id: 'bot', icon: 'fa-solid fa-robot', label: 'Chống CC & Bot' },
     { id: 'telegram', icon: 'fa-brands fa-telegram', label: 'Telegram' },
     { id: 'settings', icon: 'fa-solid fa-gear', label: 'Settings' },
   ];
