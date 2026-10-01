@@ -36,6 +36,7 @@ const haproxyConfigTemplate = `# ===============================================
 
 global
     log stdout format raw local0
+    log waf-backend:5140 local0 info
 
 defaults
     log global
@@ -49,26 +50,29 @@ defaults
 frontend default
     mode http
     bind *:80
-    log-format "%ci:%cp [%t] %ft %b/%s %ST %B %{+Q}r %[var(txn.coraza.id)] spoa-error:%[var(txn.coraza.error)] waf-action:%[var(txn.coraza.action)]"
+    log-format "%ci:%cp [%t] %ft %b/%s %ST %B %{+Q}r %[var(txn.coraza.id)] spoa-error:%[var(txn.coraza.error)] waf-action:%[var(txn.coraza.action)] blocked-by:%[var(txn.blocked_by)]"
 
     # ========================================
     # IP Access Control (Fast-Path Enforcement)
     # ========================================
     acl is_whitelisted src -f /usr/local/etc/haproxy/rules/whitelist.ips
     acl is_blacklisted src -f /usr/local/etc/haproxy/rules/blacklist.ips
+    http-request set-var(txn.blocked_by) str(HAProxy-IP-Blacklist) if is_blacklisted !is_whitelisted
     http-request deny deny_status 403 hdr "X-Blocked-By" "HAProxy-IP-Blacklist" if is_blacklisted !is_whitelisted
 
     # ========================================
     # Internal Challenge & API Gateway
     # ========================================
     acl is_waf_challenge path_beg /waf-challenge /api/challenge
-    use_backend backend_waf_internal if is_waf_challenge
+    acl is_waf_dashboard path_beg /api /admin /ws /assets /css /js
+    use_backend backend_waf_internal if is_waf_challenge or is_waf_dashboard
 
 {{- if .BlockScanners }}
     # ========================================
     # Scanner & Malicious Bot Defense
     # ========================================
     acl is_scanner_agent hdr_sub(user-agent) -i sqlmap nikto acunetix nessus masscan gobuster dirbuster wpscan
+    http-request set-var(txn.blocked_by) str(aaWAF-Scanner-Shield) if is_scanner_agent !is_whitelisted
     http-request deny deny_status 403 hdr "X-Blocked-By" "aaWAF-Scanner-Shield" if is_scanner_agent !is_whitelisted
 {{- end }}
 
@@ -87,11 +91,14 @@ frontend default
     acl has_waf_clearance req.cook(waf_clearance) -m found
 
 {{- if eq .CCAction "block_429" }}
+    http-request set-var(txn.blocked_by) str(aaWAF-CC-Shield) if is_cc_flooding is_cc_target_site !is_whitelisted !has_waf_clearance !is_waf_challenge
     http-request deny deny_status 429 hdr "X-Blocked-By" "aaWAF-CC-Shield" if is_cc_flooding is_cc_target_site !is_whitelisted !has_waf_clearance !is_waf_challenge
 {{- else if eq .CCAction "auto_ban" }}
+    http-request set-var(txn.blocked_by) str(aaWAF-CC-Shield-AutoBan) if is_cc_flooding is_cc_target_site !is_whitelisted !has_waf_clearance !is_waf_challenge
     http-request deny deny_status 403 hdr "X-Blocked-By" "aaWAF-CC-Shield-AutoBan" if is_cc_flooding is_cc_target_site !is_whitelisted !has_waf_clearance !is_waf_challenge
 {{- else }}
     # Challenge Mode (Redirect to /waf-challenge)
+    http-request set-var(txn.blocked_by) str(aaWAF-CC-Challenge) if is_cc_flooding is_cc_target_site !is_whitelisted !has_waf_clearance !is_waf_challenge
     http-request redirect code 302 location /waf-challenge?return_url=%[path] if is_cc_flooding is_cc_target_site !is_whitelisted !has_waf_clearance !is_waf_challenge
 {{- end }}
 {{- else }}
@@ -101,11 +108,14 @@ frontend default
     acl has_waf_clearance req.cook(waf_clearance) -m found
 
 {{- if eq .CCAction "block_429" }}
+    http-request set-var(txn.blocked_by) str(aaWAF-CC-Shield) if is_cc_flooding !is_whitelisted !has_waf_clearance !is_waf_challenge
     http-request deny deny_status 429 hdr "X-Blocked-By" "aaWAF-CC-Shield" if is_cc_flooding !is_whitelisted !has_waf_clearance !is_waf_challenge
 {{- else if eq .CCAction "auto_ban" }}
+    http-request set-var(txn.blocked_by) str(aaWAF-CC-Shield-AutoBan) if is_cc_flooding !is_whitelisted !has_waf_clearance !is_waf_challenge
     http-request deny deny_status 403 hdr "X-Blocked-By" "aaWAF-CC-Shield-AutoBan" if is_cc_flooding !is_whitelisted !has_waf_clearance !is_waf_challenge
 {{- else }}
     # Default Action: Challenge Mode (Redirect to /waf-challenge)
+    http-request set-var(txn.blocked_by) str(aaWAF-CC-Challenge) if is_cc_flooding !is_whitelisted !has_waf_clearance !is_waf_challenge
     http-request redirect code 302 location /waf-challenge?return_url=%[path] if is_cc_flooding !is_whitelisted !has_waf_clearance !is_waf_challenge
 {{- end }}
 {{- end }}

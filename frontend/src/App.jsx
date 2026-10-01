@@ -320,7 +320,7 @@ const isValidIPOrCIDR = (val) => {
 
   const pageTitles = {
     overview: 'Range Overview · SOC Command Center',
-    map: 'Global Attack Origin Map',
+    map: 'SOC Security Operations Center · Live Threat Radar',
     website: 'Protected Virtual Hosts',
     logs: 'Interception Logs · Threat Forensics',
     'ip-control': 'IP Access Control',
@@ -368,7 +368,13 @@ const isValidIPOrCIDR = (val) => {
           )}
 
           {activeTab === 'map' && (
-            <AttackMap attackPins={attackPins} onSimulateAttack={handleSimulateAttack} />
+            <AttackMap
+              attackPins={attackPins}
+              liveLogs={liveLogs}
+              stats={stats}
+              onSimulateAttack={handleSimulateAttack}
+              onAddBlacklist={handleDirectAddBlacklist}
+            />
           )}
 
           {activeTab === 'website' && <WebsiteList stats={stats} />}

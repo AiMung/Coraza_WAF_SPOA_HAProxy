@@ -452,6 +452,89 @@ fi
 
 echo ""
 
+# ─── Test 13: CC Attack Simulation & Flood Log Verification ─
+echo "━━━ Test 13: CC Flood Simulation & Filter ━━━"
+RESP=$(curl -s -w "\n%{http_code}" -X POST "$API_BASE/simulate-attack?type=cc" 2>/dev/null)
+HTTP_CODE=$(echo "$RESP" | tail -n1)
+if [ "$HTTP_CODE" = "200" ]; then
+  pass "Trigger CC attack simulation returns 200"
+else
+  fail "Trigger CC attack simulation returned HTTP $HTTP_CODE"
+fi
+
+# Verify CC log exists
+RESP=$(curl -s "$API_BASE/logs?attack_type=flood&limit=5" 2>/dev/null)
+if echo "$RESP" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+assert d.get('total_count', 0) > 0, 'No flood logs found'
+logs = d.get('data', []) or d.get('logs', [])
+assert any('CC' in l.get('attack_type', '') or 'Flood' in l.get('attack_type', '') for l in logs), 'Missing CC flood attack type in logs'
+print(f'  Found {d.get(\"total_count\")} CC flood log(s), latest: {logs[0].get(\"attack_type\")} from {logs[0].get(\"client_ip\")}')
+" 2>/dev/null; then
+  pass "CC flood log captured and queryable"
+else
+  fail "CC flood log verification failed"
+fi
+
+echo ""
+
+# ─── Test 14: Telegram Token Verification Diagnostic ────────
+echo "━━━ Test 14: Telegram Token Verification Diagnostic ━━━"
+RESP=$(curl -s -w "\n%{http_code}" -X POST "$API_BASE/telegram/verify" \
+  -H "Content-Type: application/json" \
+  -d '{"bot_token":"invalid_token_xyz_123"}' 2>/dev/null)
+HTTP_CODE=$(echo "$RESP" | tail -n1)
+BODY=$(echo "$RESP" | sed '$d')
+
+if [ "$HTTP_CODE" = "200" ]; then
+  pass "Telegram verify endpoint returns 200"
+  if echo "$BODY" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+assert 'valid' in d, 'Missing valid field'
+assert d['valid'] == False, 'Expected valid=False for fake token'
+assert 'error' in d or 'message' in d, 'Missing error diagnostics'
+print(f'  Diagnostic passed: valid={d[\"valid\"]}, message={d.get(\"message\") or d.get(\"error\")}')
+" 2>/dev/null; then
+    pass "Telegram verification structure and validation logic valid"
+  else
+    fail "Telegram verification payload invalid"
+  fi
+else
+  fail "Telegram verify returned HTTP $HTTP_CODE"
+fi
+
+echo ""
+
+# ─── Test 15: Settings Configuration Backup ━━━
+echo "━━━ Test 15: Settings Configuration Backup ━━━"
+RESP=$(curl -s -w "\n%{http_code}" "$API_BASE/settings/backup" 2>/dev/null)
+HTTP_CODE=$(echo "$RESP" | tail -n1)
+BODY=$(echo "$RESP" | sed '$d')
+
+if [ "$HTTP_CODE" = "200" ]; then
+  pass "Settings backup returns 200"
+  if echo "$BODY" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+assert 'version' in d, 'Missing version field'
+assert 'settings' in d, 'Missing settings map'
+assert 'sites' in d, 'Missing sites list'
+assert 'ip_rules' in d, 'Missing ip_rules list'
+assert 'generated_at' in d, 'Missing timestamp'
+print(f'  Backup OK: {len(d[\"sites\"])} sites, {len(d[\"ip_rules\"])} IP rules, exported at {d.get(\"generated_at\")}')
+" 2>/dev/null; then
+    pass "Settings backup JSON structure is complete and valid"
+  else
+    fail "Settings backup JSON payload invalid"
+  fi
+else
+  fail "Settings backup returned HTTP $HTTP_CODE"
+fi
+
+echo ""
+
 
 # ─── Summary ──────────────────────────────────────────────────
 echo "╔══════════════════════════════════════════════════════╗"

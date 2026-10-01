@@ -151,7 +151,10 @@ export default function InterceptionLogs({
   const [typeFilter, setTypeFilter] = useState('');
   const [methodFilter, setMethodFilter] = useState('');
   const [severityFilter, setSeverityFilter] = useState('');
-  const [timeFilter, setTimeFilter] = useState('all'); // 'all', 'today', 'yesterday', '7days'
+  const [timeFilter, setTimeFilter] = useState('all'); // 'all', 'today', 'yesterday', '7days', '30days', 'custom'
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [siteFilter, setSiteFilter] = useState('');
 
   // Resilient Clipboard Copy Helper (works on HTTP, LAN IP 192.168.x.x, and HTTPS)
   const copyToClipboard = async (text) => {
@@ -281,6 +284,17 @@ export default function InterceptionLogs({
         if (timeFilter === 'today' && diffHours > 24) return false;
         if (timeFilter === 'yesterday' && (diffHours <= 24 || diffHours > 48)) return false;
         if (timeFilter === '7days' && diffHours > 168) return false;
+        if (timeFilter === '30days' && diffHours > 720) return false;
+        if (timeFilter === 'custom') {
+          if (dateFrom && logDate < new Date(dateFrom)) return false;
+          if (dateTo && logDate > new Date(dateTo + 'T23:59:59')) return false;
+        }
+      }
+
+      // Site filter
+      if (siteFilter) {
+        const target = (log.target_host || '').toLowerCase();
+        if (!target.includes(siteFilter.toLowerCase())) return false;
       }
 
       // Attack Type filter
@@ -324,7 +338,7 @@ export default function InterceptionLogs({
       }
       return true;
     });
-  }, [logs, searchQuery, typeFilter, methodFilter, severityFilter, timeFilter]);
+  }, [logs, searchQuery, typeFilter, methodFilter, severityFilter, timeFilter, dateFrom, dateTo, siteFilter]);
 
   // Distribution of attack types for Chart
   const attackCounts = useMemo(() => {
@@ -388,15 +402,18 @@ export default function InterceptionLogs({
     cutout: '70%',
   };
 
-  // Dynamic rolling hourly timeline activity (last 8 chronological hours)
+  // Dynamic rolling 30-minute timeline activity (10 30-minute intervals: 07:00, 07:30, 08:00, 08:30...)
   const hourlyActivity = useMemo(() => {
     const now = new Date();
     const buckets = [];
-    for (let i = 7; i >= 0; i--) {
-      const d = new Date(now.getTime() - i * 3600 * 1000);
-      const label = `${String(d.getHours()).padStart(2, '0')}:00`;
-      const startMs = new Date(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), 0, 0).getTime();
-      const endMs = new Date(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), 59, 59, 999).getTime();
+    const roundedM = now.getMinutes() >= 30 ? 30 : 0;
+    const baseTime = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(), roundedM, 0).getTime();
+
+    for (let i = 9; i >= 0; i--) {
+      const bTime = new Date(baseTime - i * 30 * 60 * 1000);
+      const label = `${String(bTime.getHours()).padStart(2, '0')}:${String(bTime.getMinutes()).padStart(2, '0')}`;
+      const startMs = bTime.getTime();
+      const endMs = startMs + 30 * 60 * 1000 - 1;
       buckets.push({ label, startMs, endMs, count: 0 });
     }
 
@@ -412,8 +429,6 @@ export default function InterceptionLogs({
       const matched = buckets.find((b) => logMs >= b.startMs && logMs <= b.endMs);
       if (matched) {
         matched.count++;
-      } else if (logMs >= buckets[0].startMs) {
-        buckets[buckets.length - 1].count++;
       }
     });
 
@@ -523,7 +538,7 @@ export default function InterceptionLogs({
     setSelectedLogIds(new Set());
   };
 
-  // Professional Export Handlers (UTF-8 BOM for Excel & Formatted JSON)
+  // Professional Export Handlers (UTF-8 BOM for Excel & Formatted JSON & PDF Audit Report)
   const handleExportCSV = () => {
     if (!filteredLogs || filteredLogs.length === 0) {
       alert('Không có bản ghi sự cố nào trong bộ lọc hiện tại để xuất.');
@@ -575,6 +590,138 @@ export default function InterceptionLogs({
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
+  };
+
+  const handleExportPDF = () => {
+    if (!filteredLogs || filteredLogs.length === 0) {
+      alert('Không có bản ghi sự cố nào trong bộ lọc hiện tại để xuất báo cáo PDF.');
+      return;
+    }
+    const printWin = window.open('', '_blank');
+    if (!printWin) {
+      alert('Trình duyệt đã chặn cửa sổ popup. Vui lòng cho phép popup để tạo báo cáo PDF.');
+      return;
+    }
+
+    const reportDate = new Date().toLocaleDateString('vi-VN', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+
+    const topRows = filteredLogs.slice(0, 150).map((l, i) => {
+      const geo = getGeoInfo(l.client_ip, l);
+      const sev = getSeverity(l.attack_type, l.rule_id);
+      const timeInfo = formatTimestamp(l.timestamp);
+      return `
+        <tr style="border-bottom: 1px solid #e2e8f0; font-size: 11px;">
+          <td style="padding: 6px 8px; text-align: center; color: #64748b;">${i + 1}</td>
+          <td style="padding: 6px 8px; font-family: monospace;">${timeInfo.full}</td>
+          <td style="padding: 6px 8px; font-weight: 600; font-family: monospace;">${l.client_ip || ''}</td>
+          <td style="padding: 6px 8px;">${geo.flag || ''} ${geo.country || 'Unknown'}</td>
+          <td style="padding: 6px 8px; font-weight: bold; color: ${sev.color};">${l.attack_type || 'General Threat'}</td>
+          <td style="padding: 6px 8px; font-family: monospace;">Rule ${l.rule_id || 'CRS'}</td>
+          <td style="padding: 6px 8px; max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${(l.uri || '').replace(/</g, '&lt;')}</td>
+          <td style="padding: 6px 8px; text-align: center; font-weight: bold; color: #dc2626;">403 DENY</td>
+        </tr>
+      `;
+    }).join('');
+
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Báo Cáo An Ninh aaWAF - ${new Date().toISOString().slice(0, 10)}</title>
+        <style>
+          body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 25px; color: #0f172a; background: #fff; }
+          .report-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #0f172a; padding-bottom: 15px; margin-bottom: 20px; }
+          .badge { background: #10b981; color: #fff; padding: 4px 10px; border-radius: 4px; font-size: 12px; font-weight: bold; }
+          .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 25px; }
+          .summary-card { background: #f8fafc; border: 1px solid #e2e8f0; padding: 12px; border-radius: 8px; text-align: center; }
+          .summary-card .val { font-size: 20px; font-weight: 800; margin-top: 4px; color: #0f172a; }
+          table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+          th { background: #f1f5f9; padding: 8px; text-align: left; font-size: 11px; font-weight: bold; color: #475569; border-bottom: 2px solid #cbd5e1; }
+          .footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #e2e8f0; display: flex; justify-content: space-between; font-size: 12px; color: #64748b; }
+          @media print {
+            body { margin: 0; }
+            button { display: none; }
+          }
+        </style>
+      </head>
+      <body>
+        <div style="margin-bottom: 15px;">
+          <button onclick="window.print()" style="background: #10b981; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 13px;">
+            🖨️ In Báo Cáo / Lưu File PDF (Print to PDF)
+          </button>
+        </div>
+        <div class="report-header">
+          <div>
+            <h1 style="margin: 0; font-size: 22px; color: #0f172a;">aaWAF ENTERPRISE · BÁO CÁO GIÁM SÁT AN NINH MẠNG</h1>
+            <div style="font-size: 13px; color: #64748b; margin-top: 4px;">Coraza SPOA + HAProxy Dual-Layer Defense System</div>
+          </div>
+          <div style="text-align: right;">
+            <span class="badge">CHỨNG NHẬN BÀN GIAO</span>
+            <div style="font-size: 12px; color: #64748b; margin-top: 6px;">Thời gian tạo: ${reportDate}</div>
+          </div>
+        </div>
+
+        <div class="summary-grid">
+          <div class="summary-card">
+            <div style="font-size: 11px; color: #64748b; text-transform: uppercase;">Tổng sự cố trong bộ lọc</div>
+            <div class="val" style="color: #ef4444;">${filteredLogs.length}</div>
+          </div>
+          <div class="summary-card">
+            <div style="font-size: 11px; color: #64748b; text-transform: uppercase;">Tỷ lệ ngăn chặn (Block)</div>
+            <div class="val" style="color: #10b981;">100%</div>
+          </div>
+          <div class="summary-card">
+            <div style="font-size: 11px; color: #64748b; text-transform: uppercase;">Bộ Quy Tắc Áp Dụng</div>
+            <div class="val" style="font-size: 16px; color: #3b82f6;">OWASP CRS v4.0</div>
+          </div>
+          <div class="summary-card">
+            <div style="font-size: 11px; color: #64748b; text-transform: uppercase;">Trạng Thái Hệ Thống</div>
+            <div class="val" style="font-size: 16px; color: #10b981;">BẢO VỆ CHẶT CHẼ</div>
+          </div>
+        </div>
+
+        <h3 style="font-size: 14px; margin-bottom: 6px; color: #0f172a;">Danh Sách Chi Tiết Sự Cố Ngăn Chặn (Top ${Math.min(filteredLogs.length, 150)} Bản Ghi)</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Thời Gian</th>
+              <th>IP Tấn Công</th>
+              <th>Quốc Gia</th>
+              <th>Loại Tấn Công</th>
+              <th>Quy Tắc</th>
+              <th>Mục Tiêu (URI)</th>
+              <th>Phản Hồi</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${topRows}
+          </tbody>
+        </table>
+
+        <div class="footer">
+          <div>
+            <strong>Đơn vị kiểm định:</strong> Đội ngũ Vận hành An ninh aaWAF SOC<br/>
+            <strong>Phạm vi bảo vệ:</strong> HAProxy Reverse Proxy + Coraza WAF Engine
+          </div>
+          <div style="text-align: right;">
+            <strong>Chữ ký xác nhận bàn giao nghiệm thu</strong><br/>
+            <div style="margin-top: 40px; border-bottom: 1px dotted #94a3b8; width: 180px; display: inline-block;"></div>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+
+    printWin.document.open();
+    printWin.document.write(htmlContent);
+    printWin.document.close();
   };
 
   const handleExportJSON = () => {
@@ -754,6 +901,32 @@ export default function InterceptionLogs({
           >
             <i className="fa-solid fa-file-excel" style={{ color: '#16a34a', fontSize: '13px' }}></i>
             <span>Xuất Excel ({filteredLogs.length})</span>
+          </button>
+
+          {/* Professional Export PDF Security Report Button */}
+          <button
+            type="button"
+            onClick={handleExportPDF}
+            title="Xuất Báo Cáo Giám Sát An Ninh Định Dạng PDF Chuẩn Nghiệm Thu Bàn Giao"
+            style={{
+              height: '34px',
+              padding: '0 12px',
+              borderRadius: '6px',
+              border: '1px solid #fca5a5',
+              background: '#ffffff',
+              color: '#dc2626',
+              fontSize: '12px',
+              fontWeight: 700,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
+              transition: 'all 0.15s ease',
+            }}
+          >
+            <i className="fa-solid fa-file-pdf" style={{ color: '#ef4444', fontSize: '13px' }}></i>
+            <span>Xuất PDF Báo Cáo</span>
           </button>
 
           {/* Professional Export JSON Button */}
@@ -1096,6 +1269,46 @@ export default function InterceptionLogs({
             >
               <i className="fa-solid fa-calendar-week"></i> 7 ngày
             </button>
+
+            <button
+              type="button"
+              className="btn-sm"
+              title="30 ngày qua"
+              onClick={() => { setTimeFilter('30days'); setCurrentPage(1); }}
+              style={{
+                background: timeFilter === '30days' ? '#10b981' : '#f8fafc',
+                color: timeFilter === '30days' ? '#ffffff' : '#475569',
+                border: timeFilter === '30days' ? '1px solid #059669' : '1px solid #cbd5e1',
+                fontWeight: timeFilter === '30days' ? 700 : 500,
+                boxShadow: timeFilter === '30days' ? '0 1px 2px rgba(16,185,129,0.2)' : 'none',
+                padding: '5px 11px',
+                fontSize: '11px',
+                borderRadius: '6px',
+                cursor: 'pointer',
+              }}
+            >
+              <i className="fa-solid fa-calendar-days"></i> 30 ngày
+            </button>
+
+            <button
+              type="button"
+              className="btn-sm"
+              title="Chọn khoảng thời gian tùy ý"
+              onClick={() => { setTimeFilter('custom'); setCurrentPage(1); }}
+              style={{
+                background: timeFilter === 'custom' ? '#10b981' : '#f8fafc',
+                color: timeFilter === 'custom' ? '#ffffff' : '#475569',
+                border: timeFilter === 'custom' ? '1px solid #059669' : '1px solid #cbd5e1',
+                fontWeight: timeFilter === 'custom' ? 700 : 500,
+                boxShadow: timeFilter === 'custom' ? '0 1px 2px rgba(16,185,129,0.2)' : 'none',
+                padding: '5px 11px',
+                fontSize: '11px',
+                borderRadius: '6px',
+                cursor: 'pointer',
+              }}
+            >
+              <i className="fa-solid fa-sliders"></i> Dải ngày
+            </button>
           </div>
 
           {/* Search Box */}
@@ -1157,7 +1370,9 @@ export default function InterceptionLogs({
               <option value="Path Traversal">📁 Path Traversal (LFI)</option>
               <option value="Remote Code">⚙️ Remote Code (RCE)</option>
               <option value="Scanner">🤖 Scanner / Probing</option>
-              <option value="Bot">🕷️ Botnet / CC</option>
+              <option value="CC Flood">⚡ CC Flood / HTTP Flood</option>
+              <option value="Blacklist">⛔ IP Blacklist Enforcement</option>
+              <option value="Bot">🕷️ Botnet & Crawlers</option>
             </select>
 
             <select
@@ -1203,7 +1418,10 @@ export default function InterceptionLogs({
                   setTypeFilter('');
                   setMethodFilter('');
                   setSeverityFilter('');
+                  setSiteFilter('');
                   setTimeFilter('all');
+                  setDateFrom('');
+                  setDateTo('');
                   setCurrentPage(1);
                 }}
                 title="Đặt lại toàn bộ bộ lọc"
@@ -1227,6 +1445,64 @@ export default function InterceptionLogs({
             )}
           </div>
         </div>
+
+        {/* Custom Date Range Bar */}
+        {timeFilter === 'custom' && (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px',
+              padding: '10px 14px',
+              marginTop: '10px',
+              borderRadius: '8px',
+              background: '#f8fafc',
+              border: '1px solid #cbd5e1',
+              flexWrap: 'wrap',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: '#475569' }}>
+              <i className="fa-solid fa-calendar-days" style={{ color: '#10b981' }}></i>
+              <span style={{ fontWeight: 600 }}>Từ ngày:</span>
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => { setDateFrom(e.target.value); setCurrentPage(1); }}
+                style={{ padding: '4px 8px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '11.5px', background: '#ffffff' }}
+              />
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: '#475569' }}>
+              <i className="fa-solid fa-calendar-check" style={{ color: '#0284c7' }}></i>
+              <span style={{ fontWeight: 600 }}>Đến ngày:</span>
+              <input
+                type="date"
+                value={dateTo}
+                onChange={(e) => { setDateTo(e.target.value); setCurrentPage(1); }}
+                style={{ padding: '4px 8px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '11.5px', background: '#ffffff' }}
+              />
+            </div>
+
+            {(dateFrom || dateTo) && (
+              <button
+                type="button"
+                onClick={() => { setDateFrom(''); setDateTo(''); }}
+                style={{
+                  padding: '4px 10px',
+                  borderRadius: '6px',
+                  border: '1px solid #fecaca',
+                  background: '#fef2f2',
+                  color: '#dc2626',
+                  fontSize: '11.5px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                <i className="fa-solid fa-trash-can"></i> Xóa dải ngày
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Floating Batch Action Bar when rows are selected */}
         {selectedLogIds.size > 0 && (

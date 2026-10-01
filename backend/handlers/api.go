@@ -48,13 +48,17 @@ type AaWafTrendPoint struct {
 
 type AaWafSystemStatus struct {
 	Sys        string  `json:"sys"`
+	OSName     string  `json:"os_name"`
 	Run        string  `json:"run"`
+	Uptime     string  `json:"uptime"`
 	Load       string  `json:"load"`
 	CPUCores   string  `json:"cpu_cores"`
 	CPUPercent float64 `json:"cpu_percent"`
 	MemUsedMB  int64   `json:"mem_used_mb"`
 	MemTotalMB int64   `json:"mem_total_mb"`
 	MemPercent float64 `json:"mem_percent"`
+	RAMUsedMB  int64   `json:"ram_used_mb"`
+	RAMTotalMB int64   `json:"ram_total_mb"`
 }
 
 type AaWafTelemetryCharts struct {
@@ -153,36 +157,33 @@ func GetStats(c *gin.Context) {
 		if timeRange == "yesterday" {
 			targetDateModifier = "now', '-1 day"
 		}
-		intervals := []struct {
-			label    string
-			startH   string
-			endH     string
-		}{
-			{"00:00", "00", "04"},
-			{"04:00", "04", "08"},
-			{"08:00", "08", "12"},
-			{"12:00", "12", "16"},
-			{"16:00", "16", "20"},
-			{"20:00", "20", "24"},
+		// 30-minute intervals for high precision (48 intervals per day)
+		cleanPerBucket := totalValidRequests / 48
+		if cleanPerBucket < 1 {
+			cleanPerBucket = 1
 		}
-		cleanPerBucket := totalValidRequests / int64(len(intervals))
-		for _, inv := range intervals {
-			var blockedCount int64 = 0
-			_ = database.DB.QueryRow(
-				fmt.Sprintf("SELECT COUNT(*) FROM attack_logs WHERE date(timestamp) = date('%s') AND strftime('%%H', timestamp) >= ? AND strftime('%%H', timestamp) < ?", targetDateModifier),
-				inv.startH, inv.endH,
-			).Scan(&blockedCount)
+		for h := 0; h < 24; h++ {
+			for m := 0; m < 60; m += 30 {
+				label := fmt.Sprintf("%02d:%02d", h, m)
+				startStr := fmt.Sprintf("%02d:%02d:00", h, m)
+				endStr := fmt.Sprintf("%02d:%02d:59", h, m+29)
+				var blockedCount int64 = 0
+				_ = database.DB.QueryRow(
+					fmt.Sprintf("SELECT COUNT(*) FROM attack_logs WHERE date(timestamp) = date('%s') AND time(timestamp) >= ? AND time(timestamp) <= ?", targetDateModifier),
+					startStr, endStr,
+				).Scan(&blockedCount)
 
-			cleanCount := cleanPerBucket
-			trends = append(trends, AaWafTrendPoint{
-				Time:            inv.label,
-				TotalRequests:   cleanCount + blockedCount,
-				BlockedRequests: blockedCount,
-				CleanRequests:   cleanCount,
-				Status499:       blockedCount / 5,
-				Status502:       0,
-				Status504:       0,
-			})
+				cleanCount := cleanPerBucket
+				trends = append(trends, AaWafTrendPoint{
+					Time:            label,
+					TotalRequests:   cleanCount + blockedCount,
+					BlockedRequests: blockedCount,
+					CleanRequests:   cleanCount,
+					Status499:       blockedCount / 5,
+					Status502:       0,
+					Status504:       0,
+				})
+			}
 		}
 
 	case "7days":
@@ -244,13 +245,17 @@ func GetStats(c *gin.Context) {
 	metrics := services.GetRealSystemMetrics(startTime)
 	systemStatus := AaWafSystemStatus{
 		Sys:        metrics.OSName,
+		OSName:     metrics.OSName,
 		Run:        metrics.UptimeStr,
+		Uptime:     metrics.UptimeStr,
 		Load:       metrics.LoadAvg,
 		CPUCores:   fmt.Sprintf("%d core (%.1f%%)", metrics.CPUCores, metrics.CPUPercent),
 		CPUPercent: metrics.CPUPercent,
 		MemUsedMB:  metrics.MemUsedMB,
 		MemTotalMB: metrics.MemTotalMB,
 		MemPercent: metrics.MemPercent,
+		RAMUsedMB:  metrics.MemUsedMB,
+		RAMTotalMB: metrics.MemTotalMB,
 	}
 
 	// 3. Real Telemetry from Host Kernel, HAProxy & Upstream Healthchecks
@@ -433,39 +438,101 @@ func SystemReboot(c *gin.Context) {
 	})
 }
 
+func buildLogFilterSQL(c *gin.Context) (string, []interface{}) {
+	baseWhere := " WHERE 1=1"
+	var args []interface{}
+
+	attackType := c.Query("type")
+	if attackType != "" && attackType != "all" {
+		baseWhere += " AND LOWER(attack_type) LIKE ?"
+		args = append(args, "%"+strings.ToLower(attackType)+"%")
+	}
+
+	ip := c.Query("ip")
+	if ip != "" {
+		baseWhere += " AND client_ip LIKE ?"
+		args = append(args, "%"+ip+"%")
+	}
+
+	site := c.Query("site")
+	if site != "" && site != "all" {
+		baseWhere += " AND (target_host LIKE ? OR uri LIKE ?)"
+		args = append(args, "%"+site+"%", "%"+site+"%")
+	}
+
+	q := c.Query("q")
+	if q != "" {
+		baseWhere += " AND (client_ip LIKE ? OR uri LIKE ? OR user_agent LIKE ? OR rule_msg LIKE ? OR CAST(rule_id AS TEXT) LIKE ? OR target_host LIKE ?)"
+		pattern := "%" + q + "%"
+		args = append(args, pattern, pattern, pattern, pattern, pattern, pattern)
+	}
+
+	timeFilter := c.Query("time_filter")
+	dateFrom := c.Query("date_from")
+	dateTo := c.Query("date_to")
+
+	switch timeFilter {
+	case "today":
+		baseWhere += " AND date(timestamp) = date('now')"
+	case "yesterday":
+		baseWhere += " AND date(timestamp) = date('now', '-1 day')"
+	case "7days":
+		baseWhere += " AND timestamp >= datetime('now', '-7 days')"
+	case "30days":
+		baseWhere += " AND timestamp >= datetime('now', '-30 days')"
+	case "custom":
+		if dateFrom != "" {
+			baseWhere += " AND timestamp >= ?"
+			args = append(args, dateFrom)
+		}
+		if dateTo != "" {
+			baseWhere += " AND timestamp <= ?"
+			args = append(args, dateTo)
+		}
+	default:
+		if dateFrom != "" {
+			baseWhere += " AND timestamp >= ?"
+			args = append(args, dateFrom)
+		}
+		if dateTo != "" {
+			baseWhere += " AND timestamp <= ?"
+			args = append(args, dateTo)
+		}
+	}
+
+	severity := c.Query("severity")
+	switch strings.ToLower(severity) {
+	case "critical":
+		baseWhere += " AND (rule_id >= 942000 AND rule_id <= 942999 OR rule_id >= 932000 AND rule_id <= 932999 OR LOWER(attack_type) LIKE '%sql%' OR LOWER(attack_type) LIKE '%rce%')"
+	case "high":
+		baseWhere += " AND (rule_id >= 941000 AND rule_id <= 941999 OR rule_id >= 930000 AND rule_id <= 930999 OR LOWER(attack_type) LIKE '%xss%' OR LOWER(attack_type) LIKE '%lfi%' OR LOWER(attack_type) LIKE '%traversal%')"
+	case "medium":
+		baseWhere += " AND (rule_id = 10002 OR rule_id = 10003 OR LOWER(attack_type) LIKE '%scanner%' OR LOWER(attack_type) LIKE '%flood%' OR LOWER(attack_type) LIKE '%cc%')"
+	case "low":
+		baseWhere += " AND (rule_id = 10001 OR LOWER(attack_type) LIKE '%blacklist%' OR LOWER(attack_type) LIKE '%general%')"
+	}
+
+	return baseWhere, args
+}
+
 func GetLogs(c *gin.Context) {
 	limitStr := c.DefaultQuery("limit", "50")
 	pageStr := c.DefaultQuery("page", "1")
-	attackType := c.Query("type")
-	ip := c.Query("ip")
-	q := c.Query("q")
 
 	limit, _ := strconv.Atoi(limitStr)
 	page, _ := strconv.Atoi(pageStr)
 	if page < 1 {
 		page = 1
 	}
-	if limit < 1 || limit > 500 {
+	if limit < 1 {
 		limit = 50
+	}
+	if limit > 50000 {
+		limit = 50000
 	}
 	offset := (page - 1) * limit
 
-	baseWhere := " WHERE 1=1"
-	var args []interface{}
-
-	if attackType != "" && attackType != "all" {
-		baseWhere += " AND LOWER(attack_type) LIKE ?"
-		args = append(args, "%"+strings.ToLower(attackType)+"%")
-	}
-	if ip != "" {
-		baseWhere += " AND client_ip LIKE ?"
-		args = append(args, "%"+ip+"%")
-	}
-	if q != "" {
-		baseWhere += " AND (client_ip LIKE ? OR uri LIKE ? OR user_agent LIKE ? OR rule_msg LIKE ? OR CAST(rule_id AS TEXT) LIKE ?)"
-		pattern := "%" + q + "%"
-		args = append(args, pattern, pattern, pattern, pattern, pattern)
-	}
+	baseWhere, args := buildLogFilterSQL(c)
 
 	// Count total
 	var totalCount int64 = 0
@@ -503,29 +570,18 @@ func GetLogs(c *gin.Context) {
 
 func ExportLogs(c *gin.Context) {
 	format := c.DefaultQuery("format", "json")
-	attackType := c.Query("type")
-	ip := c.Query("ip")
-	q := c.Query("q")
-
-	baseWhere := " WHERE 1=1"
-	var args []interface{}
-
-	if attackType != "" && attackType != "all" {
-		baseWhere += " AND LOWER(attack_type) LIKE ?"
-		args = append(args, "%"+strings.ToLower(attackType)+"%")
-	}
-	if ip != "" {
-		baseWhere += " AND client_ip LIKE ?"
-		args = append(args, "%"+ip+"%")
-	}
-	if q != "" {
-		baseWhere += " AND (client_ip LIKE ? OR uri LIKE ? OR rule_msg LIKE ?)"
-		pattern := "%" + q + "%"
-		args = append(args, pattern, pattern, pattern)
+	limitStr := c.DefaultQuery("limit", "50000")
+	limit, _ := strconv.Atoi(limitStr)
+	if limit < 1 || limit > 100000 {
+		limit = 50000
 	}
 
-	query := "SELECT id, txn_id, client_ip, timestamp, method, uri, user_agent, attack_type, rule_id, rule_msg, action, status, raw_payload, COALESCE(target_host,'') FROM attack_logs" + baseWhere + " ORDER BY id DESC LIMIT 5000"
-	rows, err := database.DB.Query(query, args...)
+	baseWhere, args := buildLogFilterSQL(c)
+
+	query := "SELECT id, txn_id, client_ip, timestamp, method, uri, user_agent, attack_type, rule_id, rule_msg, action, status, raw_payload, COALESCE(target_host,'') FROM attack_logs" + baseWhere + " ORDER BY id DESC LIMIT ?"
+	queryArgs := append(args, limit)
+
+	rows, err := database.DB.Query(query, queryArgs...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -545,18 +601,19 @@ func ExportLogs(c *gin.Context) {
 	}
 
 	if format == "csv" {
-		c.Header("Content-Disposition", "attachment; filename=waf_attack_logs.csv")
+		c.Header("Content-Disposition", "attachment; filename=waf_attack_logs_"+time.Now().Format("20060102_150405")+".csv")
 		c.Header("Content-Type", "text/csv; charset=utf-8")
 		var sb strings.Builder
-		sb.WriteString("ID,TxnID,ClientIP,Country,City,Timestamp,Method,URI,UserAgent,AttackType,RuleID,RuleMsg,Action,Status,RawPayload\n")
+		sb.WriteString("\uFEFFID,TxnID,ClientIP,Country,City,Timestamp,Method,URI,UserAgent,AttackType,RuleID,RuleMsg,Action,Status,TargetHost,RawPayload\n")
 		for _, l := range logs {
-			sb.WriteString(fmt.Sprintf("%d,\"%s\",\"%s\",\"%s\",\"%s\",\"%s\",\"%s\",\"%s\",\"%s\",\"%s\",%d,\"%s\",\"%s\",%d,\"%s\"\n",
+			sb.WriteString(fmt.Sprintf("%d,\"%s\",\"%s\",\"%s\",\"%s\",\"%s\",\"%s\",\"%s\",\"%s\",\"%s\",%d,\"%s\",\"%s\",%d,\"%s\",\"%s\"\n",
 				l.ID, l.TxnID, l.ClientIP, l.Country, l.City, l.Timestamp, l.Method,
 				strings.ReplaceAll(l.URI, "\"", "\"\""),
 				strings.ReplaceAll(l.UserAgent, "\"", "\"\""),
 				l.AttackType, l.RuleID,
 				strings.ReplaceAll(l.RuleMsg, "\"", "\"\""),
 				l.Action, l.Status,
+				strings.ReplaceAll(l.TargetHost, "\"", "\"\""),
 				strings.ReplaceAll(l.RawPayload, "\"", "\"\""),
 			))
 		}
@@ -565,8 +622,12 @@ func ExportLogs(c *gin.Context) {
 	}
 
 	// JSON format
-	c.Header("Content-Disposition", "attachment; filename=waf_attack_logs.json")
-	c.JSON(http.StatusOK, gin.H{"exported_at": time.Now().Format("2006-01-02 15:04:05"), "total": len(logs), "data": logs})
+	c.Header("Content-Disposition", "attachment; filename=waf_attack_logs_"+time.Now().Format("20060102_150405")+".json")
+	c.JSON(http.StatusOK, gin.H{
+		"exported_at": time.Now().Format("2006-01-02 15:04:05"),
+		"total":       len(logs),
+		"data":        logs,
+	})
 }
 
 func GetIPRules(c *gin.Context) {
@@ -708,6 +769,58 @@ func TestTelegram(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Test notification sent successfully to Telegram!"})
 }
 
+// POST /api/telegram/verify - Tests token validity directly with Telegram getMe API
+func VerifyTelegramToken(c *gin.Context) {
+	var payload struct {
+		BotToken string `json:"bot_token"`
+	}
+	_ = c.ShouldBindJSON(&payload)
+	token := strings.TrimSpace(payload.BotToken)
+	if token == "" {
+		cfg := services.GetTelegramConfig()
+		token = cfg.BotToken
+	}
+	if token == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"valid": false, "error": "Bot token chưa được cung cấp"})
+		return
+	}
+
+	url := fmt.Sprintf("https://api.telegram.org/bot%s/getMe", token)
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"valid": false,
+			"error": "Không thể kết nối đến máy chủ Telegram: " + err.Error(),
+		})
+		return
+	}
+	defer resp.Body.Close()
+
+	var tgRes struct {
+		OK          bool                   `json:"ok"`
+		Result      map[string]interface{} `json:"result"`
+		Description string                 `json:"description"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&tgRes); err != nil || !tgRes.OK {
+		errMsg := tgRes.Description
+		if errMsg == "" {
+			errMsg = fmt.Sprintf("HTTP %d từ Telegram API", resp.StatusCode)
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"valid": false,
+			"error": "Token Bot Telegram không hợp lệ: " + errMsg,
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"valid":   true,
+		"bot":     tgRes.Result,
+		"message": "Token Telegram hợp lệ! Đã kết nối thành công với Bot.",
+	})
+}
+
 func SimulateAttack(c *gin.Context) {
 	attackType := c.DefaultQuery("type", "sqli")
 
@@ -757,6 +870,36 @@ func SimulateAttack(c *gin.Context) {
 			Action:     "DENY",
 			Status:     403,
 			RawPayload: "page=../../../../etc/shadow",
+		}
+	case "cc":
+		logItem = database.AttackLog{
+			TxnID:      fmt.Sprintf("sim-cc-%d", time.Now().UnixNano()),
+			ClientIP:   "192.168.246.55",
+			Timestamp:  services.VietnamNowRFC3339(),
+			Method:     "GET",
+			URI:        "/api/products/search?flood=true",
+			UserAgent:  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) HTTPFlood/2.1",
+			AttackType: "CC Flood / HTTP Flood",
+			RuleID:     10003,
+			RuleMsg:    "HTTP Flood threshold exceeded (25 req/10s); 429 Challenge Triggered",
+			Action:     "DENY",
+			Status:     429,
+			RawPayload: "Rate limit: 25 req/10s (Threshold: 20 req/10s)",
+		}
+	case "blacklist":
+		logItem = database.AttackLog{
+			TxnID:      fmt.Sprintf("sim-bl-%d", time.Now().UnixNano()),
+			ClientIP:   "198.51.100.77",
+			Timestamp:  services.VietnamNowRFC3339(),
+			Method:     "GET",
+			URI:        "/wp-login.php",
+			UserAgent:  "Mozilla/5.0 (X11; Linux x86_64)",
+			AttackType: "IP Blacklist Enforcement",
+			RuleID:     10001,
+			RuleMsg:    "Client IP blocked by HAProxy Layer 1 Blacklist ACL",
+			Action:     "DENY",
+			Status:     403,
+			RawPayload: "Fast-path deny (Blacklist rule match)",
 		}
 	default:
 		logItem = database.AttackLog{

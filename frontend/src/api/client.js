@@ -36,11 +36,16 @@ export async function apiSend(path, method, body) {
 export const wafApi = {
   stats: (range = '30days', category = 'ip_rank') =>
     apiGet(`/stats?range=${encodeURIComponent(range)}&category=${encodeURIComponent(category)}`),
-  logs: ({ limit = 200, page = 1, ip = '', type = '', q = '' } = {}) => {
+  logs: ({ limit = 500, page = 1, ip = '', type = '', q = '', time_filter = '', date_from = '', date_to = '', site = '', severity = '' } = {}) => {
     const qs = new URLSearchParams({ limit: String(limit), page: String(page) });
     if (ip) qs.set('ip', ip);
     if (type) qs.set('type', type);
     if (q) qs.set('q', q);
+    if (time_filter) qs.set('time_filter', time_filter);
+    if (date_from) qs.set('date_from', date_from);
+    if (date_to) qs.set('date_to', date_to);
+    if (site) qs.set('site', site);
+    if (severity) qs.set('severity', severity);
     return apiGet(`/logs?${qs.toString()}`);
   },
   ipRules: () => apiGet('/ip-rules'),
@@ -48,6 +53,7 @@ export const wafApi = {
   telegram: () => apiGet('/telegram'),
   saveTelegram: (cfg) => apiSend('/telegram', 'POST', cfg),
   testTelegram: () => apiSend('/telegram/test', 'POST'),
+  verifyTelegram: (bot_token) => apiSend('/telegram/verify', 'POST', { bot_token }),
   botDefense: () => apiGet('/bot-defense'),
   saveBotDefense: (payload) => apiSend('/bot-defense', 'POST', payload),
   addIpRule: (payload) => apiSend('/ip-rules', 'POST', payload),
@@ -68,6 +74,12 @@ export const wafApi = {
     if (filters.type) qs.set('type', filters.type);
     if (filters.ip) qs.set('ip', filters.ip);
     if (filters.q) qs.set('q', filters.q);
+    if (filters.time_filter) qs.set('time_filter', filters.time_filter);
+    if (filters.date_from) qs.set('date_from', filters.date_from);
+    if (filters.date_to) qs.set('date_to', filters.date_to);
+    if (filters.site) qs.set('site', filters.site);
+    if (filters.severity) qs.set('severity', filters.severity);
+    if (filters.limit) qs.set('limit', String(filters.limit));
     return `${API_BASE}/logs/export?${qs.toString()}`;
   },
   customRules: () => apiGet('/custom-rules'),
@@ -78,5 +90,7 @@ export const wafApi = {
   testCustomRule: (payload) => apiSend('/custom-rules/test-eval', 'POST', payload),
   settings: () => apiGet('/settings'),
   saveSettings: (payload) => apiSend('/settings', 'POST', payload),
+  backupSettingsUrl: () => `${API_BASE}/settings/backup`,
+  restoreSettings: (payload) => apiSend('/settings/restore', 'POST', payload),
   updatePassword: (payload) => apiSend('/settings/password', 'POST', payload),
 };

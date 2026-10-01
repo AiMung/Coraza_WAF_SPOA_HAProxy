@@ -51,7 +51,10 @@ func main() {
 	// 7. Start Coraza Audit Log Watcher in background
 	services.StartLogWatcher(auditLogPath)
 
-	// 8. Setup Gin Router
+	// 8. Start HAProxy Syslog UDP Ingestion Engine in background (:5140)
+	services.StartHAProxySyslogListener(":5140")
+
+	// 9. Setup Gin Router
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
 
@@ -64,8 +67,9 @@ func main() {
 		AllowCredentials: true,
 	}))
 
-	// API Routes
+	// API Routes (Protected by SecurityMiddleware)
 	api := r.Group("/api")
+	api.Use(handlers.SecurityMiddleware())
 	{
 		api.GET("/stats", handlers.GetStats)
 		api.GET("/logs", handlers.GetLogs)
@@ -83,6 +87,7 @@ func main() {
 		api.GET("/telegram", handlers.GetTelegram)
 		api.POST("/telegram", handlers.UpdateTelegram)
 		api.POST("/telegram/test", handlers.TestTelegram)
+		api.POST("/telegram/verify", handlers.VerifyTelegramToken)
 		api.GET("/bot-defense", handlers.GetBotDefense)
 		api.POST("/bot-defense", handlers.SaveBotDefense)
 		api.POST("/challenge/verify", handlers.VerifyChallenge)
@@ -97,6 +102,8 @@ func main() {
 		api.POST("/simulate-attack", handlers.SimulateAttack)
 		api.GET("/settings", handlers.GetSettings)
 		api.POST("/settings", handlers.SaveSettings)
+		api.GET("/settings/backup", handlers.BackupSettings)
+		api.POST("/settings/restore", handlers.RestoreSettings)
 		api.POST("/settings/password", handlers.UpdateAdminPassword)
 		api.POST("/system/fix", handlers.SystemFix)
 		api.POST("/system/reboot", handlers.SystemReboot)
