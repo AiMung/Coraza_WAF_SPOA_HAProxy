@@ -106,6 +106,10 @@ func main() {
 		api.GET("/settings/backup", handlers.BackupSettings)
 		api.POST("/settings/restore", handlers.RestoreSettings)
 		api.POST("/settings/password", handlers.UpdateAdminPassword)
+		api.GET("/email/settings", handlers.GetEmailSettings)
+		api.POST("/email/settings", handlers.SaveEmailSettings)
+		api.POST("/email/send-test", handlers.SendTestEmail)
+		api.POST("/email/send-report", handlers.SendReportEmail)
 		api.POST("/system/fix", handlers.SystemFix)
 		api.POST("/system/reboot", handlers.SystemReboot)
 	}
