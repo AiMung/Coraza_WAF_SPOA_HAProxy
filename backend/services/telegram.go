@@ -35,36 +35,27 @@ type InlineKeyboardMarkup struct {
 	InlineKeyboard [][]InlineKeyboardButton `json:"inline_keyboard"`
 }
 
-type KeyboardButton struct {
-	Text string `json:"text"`
+type ReplyKeyboardRemove struct {
+	RemoveKeyboard bool `json:"remove_keyboard"`
+	Selective      bool `json:"selective,omitempty"`
 }
 
-type ReplyKeyboardMarkup struct {
-	Keyboard        [][]KeyboardButton `json:"keyboard"`
-	ResizeKeyboard  bool               `json:"resize_keyboard"`
-	IsPersistent    bool               `json:"is_persistent"`
-	OneTimeKeyboard bool               `json:"one_time_keyboard"`
-}
-
-// GetMainReplyMenu returns a persistent bottom keyboard menu for instant touch control
-func GetMainReplyMenu() *ReplyKeyboardMarkup {
-	return &ReplyKeyboardMarkup{
-		Keyboard: [][]KeyboardButton{
+// GetInlineControlMenu returns clean inline buttons attached right inside the message
+func GetInlineControlMenu() *InlineKeyboardMarkup {
+	return &InlineKeyboardMarkup{
+		InlineKeyboard: [][]InlineKeyboardButton{
 			{
-				{Text: "📊 Thống Kê WAF"},
-				{Text: "🔍 5 Tấn Công Gần Nhất"},
+				{Text: "📊 Thống Kê WAF", CallbackData: "cmd_stats"},
+				{Text: "🔍 5 Tấn Công Gần Nhất", CallbackData: "cmd_latest"},
 			},
 			{
-				{Text: "🖥️ Trạng Thái SOC"},
-				{Text: "⚡ Demo Chặn 20s"},
+				{Text: "🖥️ Trạng Thái SOC", CallbackData: "cmd_status"},
+				{Text: "⚡ Demo Chặn 20s", CallbackData: "cmd_demo20s"},
 			},
 			{
-				{Text: "📋 Trợ Giúp / Lệnh"},
+				{Text: "📋 Bảng Lệnh & Trợ Giúp", CallbackData: "cmd_help"},
 			},
 		},
-		ResizeKeyboard:  true,
-		IsPersistent:    true,
-		OneTimeKeyboard: false,
 	}
 }
 
@@ -161,9 +152,9 @@ func GetTelegramConfig() database.TelegramConfig {
 	return tgConfig
 }
 
-// SendTelegramMessage sends a basic or styled HTML message with the persistent touch menu
+// SendTelegramMessage sends an HTML message with clean inline action buttons (no bottom keyboard)
 func SendTelegramMessage(token, chatID, message string) error {
-	return SendTelegramMessageWithReplyMarkup(token, chatID, message, GetMainReplyMenu())
+	return SendTelegramMessageWithKeyboard(token, chatID, message, GetInlineControlMenu())
 }
 
 // SendTelegramMessageWithKeyboard sends an HTML message with optional Inline Buttons
@@ -639,6 +630,10 @@ func handleTelegramCallback(token, queryID string, chatID int64, data string) {
 		ip := strings.TrimPrefix(data, "ban:")
 		banIP(token, chatIDStr, ip, "15m", "Chặn tức thì qua Telegram Alert Quick Action (15 phút)")
 		answerCallbackQuery(token, queryID, fmt.Sprintf("Đã chặn IP %s trong 15 phút!", ip))
+	} else if strings.HasPrefix(data, "unban:") {
+		ip := strings.TrimPrefix(data, "unban:")
+		unbanIP(token, chatIDStr, ip)
+		answerCallbackQuery(token, queryID, fmt.Sprintf("Đã gỡ chặn IP %s thành công!", ip))
 	} else if strings.HasPrefix(data, "white:") {
 		ip := strings.TrimPrefix(data, "white:")
 		whitelistIP(token, chatIDStr, ip, "Whitelist qua Telegram Alert Quick Action")
@@ -652,16 +647,26 @@ func handleTelegramCallback(token, queryID string, chatID int64, data string) {
 	} else if data == "cmd_status" {
 		answerCallbackQuery(token, queryID, "Đang kiểm tra trạng thái máy chủ SOC...")
 		sendStatusMessage(token, chatIDStr)
+	} else if data == "cmd_demo20s" {
+		answerCallbackQuery(token, queryID, "Đang kích hoạt Demo chặn IP 20s...")
+		testIP := "203.0.113.88"
+		banIP(token, chatIDStr, testIP, "20s", "Demo kịch bản chặn 20 giây & tự động gỡ đếm ngược")
+	} else if data == "cmd_help" {
+		answerCallbackQuery(token, queryID, "Đang mở bảng hướng dẫn...")
+		sendHelpMessage(token, chatIDStr)
 	}
 }
 
 func sendHelpMessage(token, chatID string) {
+	// First ensure any old bottom keyboard is collapsed and removed from user client
+	_ = SendTelegramMessageWithReplyMarkup(token, chatID, "<i>📱 Đang chuyển đổi sang chế độ phím bấm Inline trong tin nhắn...</i>", &ReplyKeyboardRemove{RemoveKeyboard: true})
+
 	help := `🛡️ <b>CORAZA WAF SOC — TRUNG TÂM ĐIỀU KHIỂN TELEGRAM</b>
 
 Hệ thống điều phối an ninh <b>Coraza WAF + HAProxy Gateway</b>.
-Bạn có thể bấm trực tiếp các nút menu ở dưới bàn phím hoặc dùng các lệnh sau:
+Bạn có thể bấm trực tiếp các nút bên dưới tin nhắn này để thực thi thao tác:
 
-<b>📋 Bảng Lệnh Thao Tác:</b>
+<b>📋 Bảng Lệnh Thao Tác Nhanh:</b>
 • <code>/stats</code> : Thống kê lưu lượng & vi phạm WAF trong ngày
 • <code>/latest</code> : Xem 5 cuộc tấn công bị chặn gần nhất
 • <code>/status</code> : Trạng thái CPU, RAM & Coraza WAF Engine
@@ -670,11 +675,10 @@ Bạn có thể bấm trực tiếp các nút menu ở dưới bàn phím hoặc
 • <code>/unban &lt;IP&gt;</code> : Gỡ bỏ IP khỏi danh sách cấm
 • <code>/whitelist &lt;IP&gt; [lý do]</code> : Cho phép IP bỏ qua WAF
 • <code>/sim &lt;sqli|xss|lfi&gt;</code> : Giả lập cuộc tấn công để thử nghiệm cảnh báo
-• <code>/menu</code> : Mở lại bàn phím điều khiển nhanh
 
-<i>💡 Khi có tấn công xảy ra, Bot sẽ gửi cảnh báo kèm nút bấm Chặn 20s / Chặn 15m để bạn phản ứng chỉ với 1 chạm!</i>`
+<i>💡 Mọi thông báo tấn công và kết quả đều có nút bấm thao tác trực tiếp, không làm vướng bàn phím gõ chữ của bạn!</i>`
 
-	_ = SendTelegramMessage(token, chatID, help)
+	_ = SendTelegramMessageWithKeyboard(token, chatID, help, GetInlineControlMenu())
 }
 
 func sendStatsMessage(token, chatID string) {
@@ -828,6 +832,7 @@ func banIP(token, chatID, ip, durationStr, reason string) {
 
 	// Sync to HAProxy & Coraza active rule files immediately
 	_ = SyncIPRulesToFile()
+	BroadcastIPRulesUpdated("blacklist", ip)
 
 	geo := LookupGeoIP(ip)
 	msg := fmt.Sprintf(
@@ -837,10 +842,19 @@ func banIP(token, chatID, ip, durationStr, reason string) {
 			"• <b>Trạng thái:</b> 🔴 <b>BLACKLIST (BỊ TỪ CHỐI)</b>\n"+
 			"• <b>Lý do:</b> <i>%s</i>\n"+
 			"• <b>Hiệu lực:</b> Tức thì trên toàn cụm HAProxy + Coraza WAF.\n\n"+
-			"<i>Dùng lệnh <code>/unban %s</code> nếu muốn gỡ bỏ thủ công.</i>",
-		ip, geo.Flag, geo.Country, durationDisplay, reason, ip,
+			"<i>Nhấn nút bên dưới nếu bạn muốn gỡ cấm ngay lập tức:</i>",
+		ip, geo.Flag, geo.Country, durationDisplay, reason,
 	)
-	_ = SendTelegramMessage(token, chatID, msg)
+
+	markup := &InlineKeyboardMarkup{
+		InlineKeyboard: [][]InlineKeyboardButton{
+			{
+				{Text: fmt.Sprintf("🔓 Gỡ Chặn %s Ngay", ip), CallbackData: fmt.Sprintf("unban:%s", ip)},
+				{Text: "📊 Thống Kê WAF", CallbackData: "cmd_stats"},
+			},
+		},
+	}
+	_ = SendTelegramMessageWithKeyboard(token, chatID, msg, markup)
 }
 
 func unbanIP(token, chatID, ip string) {
@@ -859,6 +873,7 @@ func unbanIP(token, chatID, ip string) {
 
 	// Sync to HAProxy & Coraza active rule files immediately
 	_ = SyncIPRulesToFile()
+	BroadcastIPRulesUpdated("unban", ip)
 
 	msg := fmt.Sprintf(
 		"✅ <b>[ĐÃ GỠ BỎ IP KHỎI DANH SÁCH CHẶN]</b>\n\n"+
@@ -877,11 +892,12 @@ func whitelistIP(token, chatID, ip, reason string) {
 		return
 	}
 
+	createdAtVal := VietnamNowRFC3339()
 	_, err := database.DB.Exec(
 		`INSERT INTO ip_rules (ip, rule_type, reason, created_at)
-		 VALUES (?, 'whitelist', ?, CURRENT_TIMESTAMP)
-		 ON CONFLICT(ip) DO UPDATE SET rule_type = 'whitelist', reason = excluded.reason`,
-		ip, reason,
+		 VALUES (?, 'whitelist', ?, ?)
+		 ON CONFLICT(ip) DO UPDATE SET rule_type = 'whitelist', reason = excluded.reason, created_at = excluded.created_at`,
+		ip, reason, createdAtVal,
 	)
 	if err != nil {
 		_ = SendTelegramMessage(token, chatID, fmt.Sprintf("❌ Lỗi khi thêm Whitelist: %v", err))
@@ -890,6 +906,7 @@ func whitelistIP(token, chatID, ip, reason string) {
 
 	// Sync to HAProxy & Coraza active rule files immediately
 	_ = SyncIPRulesToFile()
+	BroadcastIPRulesUpdated("whitelist", ip)
 
 	msg := fmt.Sprintf(
 		"⚪ <b>[ĐÃ THÊM IP VÀO WHITELIST]</b>\n\n"+

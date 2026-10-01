@@ -54,6 +54,32 @@ func getCachedSetting(key, defaultValue string) string {
 	return defaultValue
 }
 
+// GetCachedSettings returns a copy of current system settings
+func GetCachedSettings() map[string]string {
+	settingsCacheMu.Lock()
+	defer settingsCacheMu.Unlock()
+
+	if time.Since(lastSettingsLoad) >= 10*time.Second {
+		rows, err := database.DB.Query("SELECT key, value FROM settings")
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var k, v string
+				if err := rows.Scan(&k, &v); err == nil {
+					cachedSettings[k] = v
+				}
+			}
+			lastSettingsLoad = time.Now()
+		}
+	}
+
+	clone := make(map[string]string, len(cachedSettings))
+	for k, v := range cachedSettings {
+		clone[k] = v
+	}
+	return clone
+}
+
 // InvalidateSettingsCache forces immediate cache refresh
 func InvalidateSettingsCache() {
 	settingsCacheMu.Lock()

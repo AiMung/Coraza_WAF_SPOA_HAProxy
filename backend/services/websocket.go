@@ -89,3 +89,13 @@ func HandleWebSocket(hub *Hub, w http.ResponseWriter, r *http.Request) {
 func BroadcastEvent(data []byte) {
 	WSHub.broadcast <- data
 }
+
+// BroadcastIPRulesUpdated broadcasts a real-time event to all connected dashboard clients
+func BroadcastIPRulesUpdated(action, ip string) {
+	WSHub.BroadcastJSON(map[string]interface{}{
+		"event":  "ip_rules_updated",
+		"action": action,
+		"ip":     ip,
+		"time":   VietnamNowRFC3339(),
+	})
+}

@@ -712,6 +712,7 @@ func AddIPRule(c *gin.Context) {
 
 	// Synchronize to HAProxy / Coraza rules
 	_ = services.SyncIPRulesToFile()
+	services.BroadcastIPRulesUpdated(req.RuleType, req.IP)
 
 	c.JSON(http.StatusOK, gin.H{"message": "IP rule saved successfully and synchronized to WAF engine"})
 }
@@ -726,6 +727,7 @@ func DeleteIPRule(c *gin.Context) {
 
 	// Synchronize to HAProxy / Coraza rules
 	_ = services.SyncIPRulesToFile()
+	services.BroadcastIPRulesUpdated("delete", id)
 
 	c.JSON(http.StatusOK, gin.H{"message": "IP rule deleted successfully and synchronized to WAF engine"})
 }

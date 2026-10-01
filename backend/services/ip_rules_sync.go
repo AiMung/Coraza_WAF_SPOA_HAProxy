@@ -250,6 +250,7 @@ func StartIPRulesExpirationDaemon() {
 
 				// Re-sync configuration files to remove unbanned IPs
 				_ = SyncIPRulesToFile()
+				BroadcastIPRulesUpdated("unban", strings.Join(expiredIPs, ","))
 			}
 		}
 	}()

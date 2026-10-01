@@ -98,4 +98,7 @@ export const wafApi = {
   backupSettingsUrl: () => `${API_BASE}/settings/backup`,
   restoreSettings: (payload) => apiSend('/settings/restore', 'POST', payload),
   updatePassword: (payload) => apiSend('/settings/password', 'POST', payload),
+  settingsDiagnostics: () => apiGet('/settings/diagnostics'),
+  reloadWafEngines: () => apiSend('/settings/reload-engines', 'POST'),
+  testAdminWhitelist: (ip) => apiSend('/settings/test-whitelist', 'POST', { ip }),
 };

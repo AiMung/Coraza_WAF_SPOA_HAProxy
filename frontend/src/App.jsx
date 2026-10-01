@@ -140,8 +140,15 @@ export default function App() {
       socket = new WebSocket(WS_URL);
       socket.onopen = () => setWsConnected(true);
       socket.onmessage = (event) => {
-        try {
           const msg = JSON.parse(event.data);
+
+          // Handle Real-Time IP Access Control Sync (Blacklist / Whitelist / Expiration)
+          if (msg.event === 'ip_rules_updated') {
+            loadIPRules();
+            loadStatsRef.current();
+            return;
+          }
+
           if (msg.event !== 'new_attack') return;
           const attackData = msg.data || {};
           const enriched = {
@@ -176,11 +183,13 @@ export default function App() {
 
     connectWS();
     const poll = setInterval(() => loadStatsRef.current(), 20000);
+    const ipPoll = setInterval(() => loadIPRules(), 5000);
 
     return () => {
       if (socket) socket.close();
       if (reconnectTimeout) clearTimeout(reconnectTimeout);
       clearInterval(poll);
+      clearInterval(ipPoll);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
