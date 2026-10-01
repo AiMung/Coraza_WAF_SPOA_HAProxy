@@ -74,9 +74,28 @@ export default function BlackWhiteList({
 
   const rulesList = Array.isArray(ipRules) ? ipRules : [];
 
-  // Metrics
-  const blacklistRules = useMemo(() => rulesList.filter((r) => r.rule_type === 'blacklist'), [rulesList]);
+  // Metrics with automatic removal of expired bans
+  const blacklistRules = useMemo(() => {
+    return rulesList.filter((r) => {
+      if (r.rule_type !== 'blacklist') return false;
+      if (r.expires_at && parseToTime(r.expires_at) <= now) return false;
+      return true;
+    });
+  }, [rulesList, now]);
+
   const whitelistRules = useMemo(() => rulesList.filter((r) => r.rule_type === 'whitelist'), [rulesList]);
+
+  // Autonomous trigger: ensure expired rules are purged from backend as soon as timer expires
+  useEffect(() => {
+    rulesList.forEach((r) => {
+      if (r.rule_type === 'blacklist' && r.expires_at) {
+        const diff = parseToTime(r.expires_at) - now;
+        if (diff <= 0 && onDeleteRule) {
+          onDeleteRule(r.id);
+        }
+      }
+    });
+  }, [rulesList, now, onDeleteRule]);
 
   const expiringSoonCount = useMemo(() => {
     return blacklistRules.filter((r) => {
@@ -312,8 +331,8 @@ export default function BlackWhiteList({
         }}
       >
         <i
-          className={isUrgent ? 'fa-solid fa-bolt' : 'fa-solid fa-stopwatch fa-spin'}
-          style={{ animationDuration: isUrgent ? '1s' : '4s', fontSize: '10px' }}
+          className={isUrgent ? 'fa-solid fa-bolt' : 'fa-regular fa-clock'}
+          style={{ fontSize: '11px', color: isUrgent ? '#4f46e5' : '#0284c7' }}
         ></i>
         {displayStr}
       </span>

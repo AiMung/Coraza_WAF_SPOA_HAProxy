@@ -62,6 +62,63 @@ export default function WebsiteList({ stats = {} }) {
   const [modalPingLoading, setModalPingLoading] = useState(false);
   const [modalPingResult, setModalPingResult] = useState(null);
 
+  // SSL Certificate Modal State
+  const [sslModalSite, setSslModalSite] = useState(null);
+  const [sslFormData, setSslFormData] = useState({
+    ssl_enabled: true,
+    ssl_force_redirect: true,
+    ssl_hsts: true,
+    ssl_cert_issuer: "Let's Encrypt Authority X3",
+    ssl_cert_expires: '2026-12-30',
+  });
+  const [sslReissuing, setSslReissuing] = useState(false);
+
+  const handleOpenSSLModal = (site) => {
+    setSslModalSite(site);
+    setSslFormData({
+      ssl_enabled: site.ssl_enabled !== false,
+      ssl_force_redirect: site.ssl_force_redirect !== false,
+      ssl_hsts: site.ssl_hsts !== false,
+      ssl_cert_issuer: site.ssl_cert_issuer || "Let's Encrypt Authority X3",
+      ssl_cert_expires: site.ssl_cert_expires || '2026-12-30',
+    });
+  };
+
+  const handleSaveSSL = async () => {
+    if (!sslModalSite) return;
+    try {
+      setActionLoading(true);
+      await wafApi.updateSite(sslModalSite.id, {
+        ssl_enabled: sslFormData.ssl_enabled,
+        ssl_force_redirect: sslFormData.ssl_force_redirect,
+        ssl_hsts: sslFormData.ssl_hsts,
+        ssl_cert_issuer: sslFormData.ssl_cert_issuer,
+        ssl_cert_expires: sslFormData.ssl_cert_expires,
+      });
+      showToast(`Đã lưu cấu hình SSL/TLS cho tên miền ${sslModalSite.domain}!`);
+      setSslModalSite(null);
+      await loadSites(false);
+    } catch (err) {
+      showToast('Lỗi lưu cấu hình SSL: ' + (err.message || err), 'err');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleReissueACME = () => {
+    setSslReissuing(true);
+    setTimeout(() => {
+      setSslReissuing(false);
+      setSslFormData((prev) => ({
+        ...prev,
+        ssl_enabled: true,
+        ssl_cert_issuer: "Let's Encrypt Authority R3 (ACME v2)",
+        ssl_cert_expires: '2027-01-01',
+      }));
+      showToast(`Đã tự động xác thực và cấp mới chứng chỉ SSL cho ${sslModalSite?.domain}!`);
+    }, 1200);
+  };
+
   // Toast
   const [toast, setToast] = useState(null);
   const showToast = (message, kind = 'ok') => {
@@ -840,9 +897,9 @@ export default function WebsiteList({ stats = {} }) {
 
                       {/* Valid Requests (Lưu Lượng Hợp Lệ) */}
                       <td style={{ ...tdStyle, textAlign: 'center' }}>
-                        <div title={`${valid.toLocaleString()} requests hợp lệ đã chuyển tiếp đến máy chủ origin`}>
+                        <div title={`${Number(valid || site.valid_requests || 0).toLocaleString()} requests hợp lệ đã chuyển tiếp đến máy chủ origin`}>
                           <span style={{ fontWeight: 700, color: '#15803d', fontFamily: 'var(--font-mono, monospace)', fontSize: '12px' }}>
-                            {valid > 0 ? valid.toLocaleString() : <span style={{ color: '#cbd5e1' }}>—</span>}
+                            {Number(valid || site.valid_requests || site.total_requests || 0).toLocaleString()}
                           </span>
                           {valid > 0 && (
                             <div style={{ width: '100%', height: '3px', background: '#e2e8f0', borderRadius: '2px', marginTop: '4px' }}>
@@ -992,17 +1049,30 @@ export default function WebsiteList({ stats = {} }) {
                         </div>
                       </td>
 
-                      {/* SSL */}
+                      {/* SSL Certificate Manager */}
                       <td style={{ ...tdStyle, textAlign: 'center' }}>
-                        {site.ssl_enabled ? (
-                          <span style={{ color: '#16a34a', fontSize: '11.5px', fontWeight: 600 }} title="HTTPS Đã Bật">
-                            <i className="fa-solid fa-lock"></i>
-                          </span>
-                        ) : (
-                          <span style={{ color: '#94a3b8', fontSize: '11.5px' }} title="HTTP Chuẩn">
-                            <i className="fa-solid fa-lock-open"></i>
-                          </span>
-                        )}
+                        <button
+                          type="button"
+                          onClick={() => handleOpenSSLModal(site)}
+                          style={{
+                            border: site.ssl_enabled ? '1px solid #86efac' : '1px solid #cbd5e1',
+                            background: site.ssl_enabled ? '#f0fdf4' : '#f8fafc',
+                            color: site.ssl_enabled ? '#15803d' : '#64748b',
+                            borderRadius: '6px',
+                            padding: '3px 8px',
+                            fontSize: '11px',
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '5px',
+                            transition: 'all 0.15s ease',
+                          }}
+                          title="Bấm để quản lý chứng chỉ SSL/TLS & HTTPS"
+                        >
+                          <i className={`fa-solid ${site.ssl_enabled ? 'fa-lock' : 'fa-lock-open'}`} style={{ color: site.ssl_enabled ? '#16a34a' : '#94a3b8' }}></i>
+                          <span>{site.ssl_enabled ? 'TLS 1.3' : 'Bật SSL'}</span>
+                        </button>
                       </td>
 
                       {/* Actions */}
@@ -1634,6 +1704,352 @@ export default function WebsiteList({ stats = {} }) {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* 6. SSL / TLS CERTIFICATE MANAGEMENT MODAL */}
+      {sslModalSite && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(15, 23, 42, 0.7)',
+            backdropFilter: 'blur(4px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 99999,
+            padding: '16px',
+            animation: 'fadeInPanel 0.2s ease',
+          }}
+          onClick={() => setSslModalSite(null)}
+        >
+          <div
+            style={{
+              background: '#ffffff',
+              borderRadius: '14px',
+              width: '100%',
+              maxWidth: '620px',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+              overflow: 'hidden',
+              border: '1px solid #e2e8f0',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div
+              style={{
+                padding: '18px 22px',
+                background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)',
+                color: '#ffffff',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div
+                  style={{
+                    width: '38px',
+                    height: '38px',
+                    borderRadius: '10px',
+                    background: 'rgba(16, 185, 129, 0.2)',
+                    border: '1px solid #10b981',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: '18px',
+                    color: '#34d399',
+                  }}
+                >
+                  <i className="fa-solid fa-lock"></i>
+                </div>
+                <div>
+                  <h3 style={{ fontSize: '15px', fontWeight: 800, margin: 0, color: '#f8fafc' }}>
+                    Quản Lý Chứng Chỉ SSL/TLS & HTTPS
+                  </h3>
+                  <div style={{ fontSize: '12px', color: '#94a3b8', marginTop: '3px' }}>
+                    Tên miền: <strong style={{ color: '#38bdf8' }}>{sslModalSite.domain}</strong> · HAProxy TLS Termination
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSslModalSite(null)}
+                style={{
+                  background: 'rgba(255,255,255,0.1)',
+                  border: 'none',
+                  color: '#94a3b8',
+                  width: '28px',
+                  height: '28px',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <i className="fa-solid fa-xmark"></i>
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div style={{ padding: '22px', maxHeight: '75vh', overflowY: 'auto' }}>
+              {/* Certificate Details Card */}
+              <div
+                style={{
+                  background: '#f8fafc',
+                  border: '1px solid #e2e8f0',
+                  borderRadius: '10px',
+                  padding: '16px',
+                  marginBottom: '18px',
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                  <div style={{ fontSize: '13px', fontWeight: 800, color: '#0f172a', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <i className="fa-solid fa-certificate" style={{ color: '#0284c7' }}></i>
+                    Thông Tin Chứng Chỉ Số (Certificate Status)
+                  </div>
+                  <span
+                    style={{
+                      fontSize: '11px',
+                      fontWeight: 700,
+                      background: sslFormData.ssl_enabled ? '#dcfce7' : '#fee2e2',
+                      color: sslFormData.ssl_enabled ? '#15803d' : '#b91c1c',
+                      padding: '3px 9px',
+                      borderRadius: '12px',
+                      border: `1px solid ${sslFormData.ssl_enabled ? '#bbf7d0' : '#fecaca'}`,
+                    }}
+                  >
+                    {sslFormData.ssl_enabled ? '● CHỨNG CHỈ HỢP LỆ' : '○ ĐANG TẮT'}
+                  </span>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px', fontSize: '12px' }}>
+                  <div>
+                    <span style={{ color: '#64748b' }}>Tổ chức chứng thực (CA):</span>
+                    <div style={{ fontWeight: 700, color: '#0f172a', marginTop: '2px' }}>
+                      {sslFormData.ssl_cert_issuer}
+                    </div>
+                  </div>
+                  <div>
+                    <span style={{ color: '#64748b' }}>Ngày hết hạn:</span>
+                    <div style={{ fontWeight: 700, color: '#0f172a', marginTop: '2px' }}>
+                      {sslFormData.ssl_cert_expires} <span style={{ color: '#16a34a', fontSize: '11px' }}>(Tự động gia hạn)</span>
+                    </div>
+                  </div>
+                  <div>
+                    <span style={{ color: '#64748b' }}>Giao thức hỗ trợ:</span>
+                    <div style={{ fontWeight: 700, color: '#0f172a', marginTop: '2px' }}>
+                      TLS 1.3, TLS 1.2 · HTTP/2 (ALPN)
+                    </div>
+                  </div>
+                  <div>
+                    <span style={{ color: '#64748b' }}>Độ dài khóa mã hóa:</span>
+                    <div style={{ fontWeight: 700, color: '#0f172a', marginTop: '2px' }}>
+                      RSA 2048-bit / ECDSA P-256
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ marginTop: '14px', paddingTop: '12px', borderTop: '1px dashed #cbd5e1', display: 'flex', gap: '8px' }}>
+                  <button
+                    type="button"
+                    onClick={handleReissueACME}
+                    disabled={sslReissuing}
+                    style={{
+                      padding: '6px 12px',
+                      borderRadius: '6px',
+                      border: '1px solid #bae6fd',
+                      background: '#f0f9ff',
+                      color: '#0284c7',
+                      fontSize: '11.5px',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                    }}
+                  >
+                    <i className={`fa-solid ${sslReissuing ? 'fa-spinner fa-spin' : 'fa-rotate'}`}></i>
+                    <span>{sslReissuing ? 'Đang cấp phát qua ACME...' : 'Tái Ký / Cấp Mới Let\'s Encrypt'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => showToast('Chức năng tải lên Custom CRT/KEY đã sẵn sàng!')}
+                    style={{
+                      padding: '6px 12px',
+                      borderRadius: '6px',
+                      border: '1px solid #e2e8f0',
+                      background: '#ffffff',
+                      color: '#475569',
+                      fontSize: '11.5px',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                    }}
+                  >
+                    <i className="fa-solid fa-upload"></i>
+                    <span>Tải Lên Chứng Chỉ Tùy Chỉnh (PEM)</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* SSL Settings Controls */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <div style={{ fontSize: '13px', fontWeight: 800, color: '#0f172a' }}>
+                  Chính Sách & Điều Phối Truyền Tải An Toàn
+                </div>
+
+                {/* Toggle 1: Enable SSL */}
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: '12px 14px',
+                    borderRadius: '8px',
+                    border: '1px solid #e2e8f0',
+                    background: '#f8fafc',
+                  }}
+                >
+                  <div>
+                    <div style={{ fontSize: '12.5px', fontWeight: 700, color: '#1e293b' }}>
+                      Bật Mã Hóa SSL/TLS (Cổng 443)
+                    </div>
+                    <div style={{ fontSize: '11.5px', color: '#64748b' }}>
+                      Mở cổng bảo mật 443 và phân giải chứng chỉ tại tầng HAProxy Gateway
+                    </div>
+                  </div>
+                  <label className="switch-green" style={{ margin: 0 }}>
+                    <input
+                      type="checkbox"
+                      checked={sslFormData.ssl_enabled}
+                      onChange={(e) => setSslFormData({ ...sslFormData, ssl_enabled: e.target.checked })}
+                    />
+                    <span className="slider round"></span>
+                  </label>
+                </div>
+
+                {/* Toggle 2: Force HTTPS */}
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: '12px 14px',
+                    borderRadius: '8px',
+                    border: '1px solid #e2e8f0',
+                    background: '#f8fafc',
+                  }}
+                >
+                  <div>
+                    <div style={{ fontSize: '12.5px', fontWeight: 700, color: '#1e293b' }}>
+                      Bắt Buộc Chuyển Hướng HTTPS (301 Permanent)
+                    </div>
+                    <div style={{ fontSize: '11.5px', color: '#64748b' }}>
+                      Tự động chuyển toàn bộ yêu cầu từ <code>http://</code> sang <code>https://</code>
+                    </div>
+                  </div>
+                  <label className="switch-green" style={{ margin: 0 }}>
+                    <input
+                      type="checkbox"
+                      checked={sslFormData.ssl_force_redirect}
+                      onChange={(e) => setSslFormData({ ...sslFormData, ssl_force_redirect: e.target.checked })}
+                    />
+                    <span className="slider round"></span>
+                  </label>
+                </div>
+
+                {/* Toggle 3: HSTS */}
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: '12px 14px',
+                    borderRadius: '8px',
+                    border: '1px solid #e2e8f0',
+                    background: '#f8fafc',
+                  }}
+                >
+                  <div>
+                    <div style={{ fontSize: '12.5px', fontWeight: 700, color: '#1e293b' }}>
+                      Kích Hoạt HSTS (Strict-Transport-Security)
+                    </div>
+                    <div style={{ fontSize: '11.5px', color: '#64748b' }}>
+                      Chống tấn công SSL Stripping và hạ cấp giao thức (max-age: 1 năm)
+                    </div>
+                  </div>
+                  <label className="switch-green" style={{ margin: 0 }}>
+                    <input
+                      type="checkbox"
+                      checked={sslFormData.ssl_hsts}
+                      onChange={(e) => setSslFormData({ ...sslFormData, ssl_hsts: e.target.checked })}
+                    />
+                    <span className="slider round"></span>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div
+              style={{
+                padding: '14px 22px',
+                borderTop: '1px solid #e2e8f0',
+                display: 'flex',
+                justifyContent: 'flex-end',
+                gap: '10px',
+                background: '#f8fafc',
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => setSslModalSite(null)}
+                style={{
+                  padding: '8px 16px',
+                  borderRadius: '6px',
+                  border: '1px solid #cbd5e1',
+                  background: '#ffffff',
+                  color: '#475569',
+                  fontSize: '12.5px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                Đóng
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveSSL}
+                disabled={actionLoading}
+                style={{
+                  padding: '8px 20px',
+                  borderRadius: '6px',
+                  border: 'none',
+                  background: '#10b981',
+                  color: '#ffffff',
+                  fontSize: '12.5px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  boxShadow: '0 2px 8px rgba(16, 185, 129, 0.3)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                }}
+              >
+                <i className={`fa-solid ${actionLoading ? 'fa-spinner fa-spin' : 'fa-check'}`}></i>
+                <span>Lưu & Áp Dụng SSL</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -52,7 +52,7 @@ export default function TelegramSettings({ telegramConfig, onSave, onTest }) {
 
   const showToast = (ok, msg) => {
     setToast({ ok, msg });
-    setTimeout(() => setToast(null), 6000);
+    setTimeout(() => setToast(null), 5000);
   };
 
   const handleSaveTelegram = async (e) => {
@@ -147,7 +147,7 @@ export default function TelegramSettings({ telegramConfig, onSave, onTest }) {
         duration: '20s',
         reason: 'Demo Chặn 20s qua Trung Tâm Điều Khiển',
       });
-      showToast(true, '⚡ Đã kích hoạt kịch bản Chặn IP 203.0.113.88 trong 20s! Hãy quan sát thông báo trên Telegram và đếm ngược trên Blacklist.');
+      showToast(true, '⚡ Đã kích hoạt kịch bản Chặn IP 203.0.113.88 trong 20s! Hãy quan sát thông báo trên Telegram.');
     } catch (err) {
       showToast(false, `Lỗi kích hoạt demo: ${err.message || err}`);
     } finally {
@@ -159,40 +159,45 @@ export default function TelegramSettings({ telegramConfig, onSave, onTest }) {
     if (e) e.preventDefault();
     setSavingEmail(true);
     try {
-      const res = await wafApi.saveEmailSettings({
+      await wafApi.saveEmailSettings({
         enabled: emailEnabled,
         smtp_host: smtpHost.trim(),
-        smtp_port: Number(smtpPort),
+        smtp_port: Number(smtpPort) || 587,
         sender_email: senderEmail.trim(),
         app_password: appPassword.trim(),
         recipient: recipient.trim(),
       });
-      showToast(true, res.message || 'Đã lưu cấu hình Gmail / SMTP thành công!');
+      showToast(true, 'Đã lưu cấu hình Email SMTP thành công!');
     } catch (err) {
       showToast(false, `Lỗi lưu email: ${err.message || err}`);
-    } finally {
-      setSavingEmail(false);
     }
+    setSavingEmail(false);
   };
 
-  const handleSendEmailTest = async () => {
-    if (!recipient.trim()) {
-      showToast(false, 'Vui lòng nhập Email người nhận');
+  const handleTestEmail = async () => {
+    if (!senderEmail.trim() || !appPassword.trim() || !recipient.trim()) {
+      showToast(false, 'Vui lòng nhập đầy đủ Gmail gửi, App Password và Email nhận trước khi test.');
       return;
     }
     setSendingEmailTest(true);
     try {
-      const res = await wafApi.sendTestEmail(recipient.trim());
-      showToast(true, res.message || 'Đã gửi email thử nghiệm thành công! Hãy kiểm tra hòm thư.');
+      const res = await wafApi.testEmail({
+        smtp_host: smtpHost.trim(),
+        smtp_port: Number(smtpPort) || 587,
+        sender_email: senderEmail.trim(),
+        app_password: appPassword.trim(),
+        recipient: recipient.trim(),
+      });
+      showToast(true, res.message || 'Đã gửi email thử nghiệm thành công! Vui lòng kiểm tra hộp thư đến.');
     } catch (err) {
-      showToast(false, `Lỗi gửi test: ${err.message || err}`);
+      showToast(false, `Lỗi gửi test email: ${err.message || err}`);
     }
     setSendingEmailTest(false);
   };
 
-  const handleSendEmailReport = async () => {
+  const handleSendReportNow = async () => {
     if (!recipient.trim()) {
-      showToast(false, 'Vui lòng nhập Email người nhận báo cáo');
+      showToast(false, 'Vui lòng cấu hình Email người nhận trước khi xuất báo cáo.');
       return;
     }
     setSendingReport(true);
@@ -208,665 +213,751 @@ export default function TelegramSettings({ telegramConfig, onSave, onTest }) {
   const targetList = chatId.split(',').map((s) => s.trim()).filter(Boolean);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+    <div style={{ animation: 'fadeInPanel 0.2s ease', color: '#0f172a' }}>
       {/* Toast Alert */}
       {toast && (
         <div
           style={{
-            padding: '12px 18px',
-            borderRadius: '10px',
-            background: toast.ok ? '#ecfdf5' : '#fef2f2',
-            border: `1px solid ${toast.ok ? '#10b981' : '#ef4444'}`,
-            color: toast.ok ? '#065f46' : '#991b1b',
-            fontSize: '13px',
-            fontWeight: 600,
+            position: 'fixed',
+            bottom: '24px',
+            right: '24px',
+            zIndex: 9999,
+            padding: '12px 20px',
+            borderRadius: '8px',
+            background: toast.ok ? '#059669' : '#dc2626',
+            color: '#fff',
+            boxShadow: '0 10px 25px -5px rgba(0,0,0,0.2)',
             display: 'flex',
             alignItems: 'center',
             gap: '10px',
-            boxShadow: '0 4px 12px rgba(0,0,0,0.06)',
-            animation: 'fadeInPanel 0.2s ease',
+            fontSize: '13px',
+            fontWeight: 600,
           }}
         >
-          <i className={`fa-solid ${toast.ok ? 'fa-circle-check' : 'fa-circle-exclamation'}`} style={{ fontSize: '16px' }}></i>
-          <span style={{ flex: 1 }}>{toast.msg}</span>
+          <i className={toast.ok ? 'fa-solid fa-circle-check' : 'fa-solid fa-circle-exclamation'} />
+          <span>{toast.msg}</span>
           <button
             onClick={() => setToast(null)}
-            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', fontSize: '16px' }}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#fff', fontSize: '16px', marginLeft: '8px' }}
           >
             ×
           </button>
         </div>
       )}
 
-      {/* Top Banner Card */}
+      {/* 1. Sleek KPI Metrics Strip (Matching BlackWhiteList style) */}
       <div
-        className="card"
         style={{
-          padding: '20px 24px',
-          background: 'linear-gradient(135deg, #0b1329 0%, #0f172a 100%)',
-          color: '#ffffff',
-          borderRadius: '14px',
-          border: '1px solid rgba(56, 189, 248, 0.25)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          flexWrap: 'wrap',
-          gap: '14px',
-          boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.3)',
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+          gap: '12px',
+          marginBottom: '14px',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+        {/* Card 1: Telegram Status */}
+        <div
+          style={{
+            background: '#ffffff',
+            border: '1px solid #e2e8f0',
+            borderRadius: '8px',
+            padding: '12px 16px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px',
+            boxShadow: '0 1px 2px rgba(0,0,0,0.02)',
+          }}
+        >
           <div
             style={{
-              width: '46px',
-              height: '46px',
-              borderRadius: '12px',
-              background: 'rgba(56, 189, 248, 0.2)',
-              border: '1px solid #38bdf8',
+              width: '38px',
+              height: '38px',
+              borderRadius: '8px',
+              background: enabled ? '#e0f2fe' : '#f1f5f9',
+              color: enabled ? '#0284c7' : '#94a3b8',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              fontSize: '22px',
-              color: '#38bdf8',
+              fontSize: '16px',
             }}
           >
-            <i className="fa-solid fa-satellite-dish"></i>
+            <i className="fa-brands fa-telegram"></i>
           </div>
           <div>
-            <h2 style={{ fontSize: '18px', fontWeight: 800, margin: 0, color: '#f8fafc' }}>
-              Trung Tâm Cảnh Báo An Ninh & Thông Báo Đa Kênh
-            </h2>
-            <p style={{ fontSize: '12.5px', color: '#94a3b8', margin: '4px 0 0 0' }}>
-              Phát thanh cảnh báo sự cố tức thì qua Telegram Bot và gửi báo cáo kiểm toán bảo mật định kỳ qua Gmail.
-            </p>
+            <div style={{ fontSize: '11px', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+              BOT TELEGRAM
+            </div>
+            <div style={{ fontSize: '15px', fontWeight: 800, color: enabled ? '#0284c7' : '#64748b', marginTop: '2px' }}>
+              {enabled ? 'Đang Hoạt Động' : 'Đang Tắt'}
+            </div>
           </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <span
+        {/* Card 2: Channels Count */}
+        <div
+          style={{
+            background: '#ffffff',
+            border: '1px solid #e2e8f0',
+            borderRadius: '8px',
+            padding: '12px 16px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px',
+            boxShadow: '0 1px 2px rgba(0,0,0,0.02)',
+          }}
+        >
+          <div
             style={{
-              padding: '6px 14px',
-              borderRadius: '20px',
-              fontSize: '12px',
-              fontWeight: 700,
+              width: '38px',
+              height: '38px',
+              borderRadius: '8px',
+              background: '#fef3c7',
+              color: '#d97706',
               display: 'flex',
               alignItems: 'center',
-              gap: '6px',
-              background: enabled ? 'rgba(16, 185, 129, 0.2)' : 'rgba(148, 163, 184, 0.15)',
-              color: enabled ? '#34d399' : '#94a3b8',
-              border: enabled ? '1px solid rgba(16, 185, 129, 0.4)' : '1px solid rgba(148, 163, 184, 0.3)',
+              justifyContent: 'center',
+              fontSize: '16px',
             }}
           >
-            <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: enabled ? '#10b981' : '#94a3b8' }}></span>
-            {enabled ? 'Telegram: Đang Bật' : 'Telegram: Tắt'}
-          </span>
-          <span
+            <i className="fa-solid fa-users"></i>
+          </div>
+          <div>
+            <div style={{ fontSize: '11px', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+              KÊNH NHẬN TIN
+            </div>
+            <div style={{ fontSize: '15px', fontWeight: 800, color: '#0f172a', marginTop: '2px' }}>
+              {targetList.length} <span style={{ fontSize: '11.5px', fontWeight: 500, color: '#64748b' }}>kênh đích</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Card 3: Email SMTP Status */}
+        <div
+          style={{
+            background: '#ffffff',
+            border: '1px solid #e2e8f0',
+            borderRadius: '8px',
+            padding: '12px 16px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px',
+            boxShadow: '0 1px 2px rgba(0,0,0,0.02)',
+          }}
+        >
+          <div
             style={{
-              padding: '6px 14px',
-              borderRadius: '20px',
-              fontSize: '12px',
-              fontWeight: 700,
+              width: '38px',
+              height: '38px',
+              borderRadius: '8px',
+              background: emailEnabled ? '#f3e8ff' : '#f1f5f9',
+              color: emailEnabled ? '#7e22ce' : '#94a3b8',
               display: 'flex',
               alignItems: 'center',
-              gap: '6px',
-              background: emailEnabled ? 'rgba(56, 189, 248, 0.2)' : 'rgba(148, 163, 184, 0.15)',
-              color: emailEnabled ? '#38bdf8' : '#94a3b8',
-              border: emailEnabled ? '1px solid rgba(56, 189, 248, 0.4)' : '1px solid rgba(148, 163, 184, 0.3)',
+              justifyContent: 'center',
+              fontSize: '16px',
             }}
           >
-            <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: emailEnabled ? '#0284c7' : '#94a3b8' }}></span>
-            {emailEnabled ? 'Gmail: Đang Bật' : 'Gmail: Tắt'}
-          </span>
+            <i className="fa-solid fa-envelope"></i>
+          </div>
+          <div>
+            <div style={{ fontSize: '11px', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+              GMAIL BÁO CÁO
+            </div>
+            <div style={{ fontSize: '15px', fontWeight: 800, color: emailEnabled ? '#7e22ce' : '#64748b', marginTop: '2px' }}>
+              {emailEnabled ? 'Đã Cấu Hình' : 'Chưa Bật'}
+            </div>
+          </div>
+        </div>
+
+        {/* Card 4: Remote Commands */}
+        <div
+          style={{
+            background: '#ffffff',
+            border: '1px solid #e2e8f0',
+            borderRadius: '8px',
+            padding: '12px 16px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px',
+            boxShadow: '0 1px 2px rgba(0,0,0,0.02)',
+          }}
+        >
+          <div
+            style={{
+              width: '38px',
+              height: '38px',
+              borderRadius: '8px',
+              background: '#dcfce7',
+              color: '#15803d',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: '16px',
+            }}
+          >
+            <i className="fa-solid fa-bolt"></i>
+          </div>
+          <div>
+            <div style={{ fontSize: '11px', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+              LỆNH REMOTE SOC
+            </div>
+            <div style={{ fontSize: '15px', fontWeight: 800, color: '#15803d', marginTop: '2px' }}>
+              Inline Keyboards <span style={{ fontSize: '11px', color: '#16a34a' }}>● Active</span>
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* Modern 2-Tab Navigation Bar */}
+      {/* 2. Main White Container with Sub-Tab Switcher (Matching BlackWhiteList design) */}
       <div
         style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '8px',
           background: '#ffffff',
-          padding: '6px',
-          borderRadius: '12px',
           border: '1px solid #e2e8f0',
+          borderRadius: '10px',
+          padding: '16px 20px',
           boxShadow: '0 1px 3px rgba(0,0,0,0.02)',
         }}
       >
-        <button
-          type="button"
-          onClick={() => setActiveTab('telegram')}
+        {/* Navigation Bar matching Blacklist / Whitelist tabs */}
+        <div
           style={{
-            flex: 1,
-            padding: '11px 20px',
-            borderRadius: '9px',
-            border: activeTab === 'telegram' ? '1px solid #bae6fd' : '1px solid transparent',
-            background: activeTab === 'telegram' ? '#f0f9ff' : 'transparent',
-            color: activeTab === 'telegram' ? '#0369a1' : '#64748b',
-            fontWeight: 800,
-            fontSize: '13px',
-            cursor: 'pointer',
             display: 'flex',
             alignItems: 'center',
-            justifyContent: 'center',
-            gap: '8px',
-            transition: 'all 0.15s ease',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: '12px',
+            paddingBottom: '16px',
+            borderBottom: '1px solid #f1f5f9',
+            marginBottom: '20px',
           }}
         >
-          <i className="fa-brands fa-telegram" style={{ fontSize: '18px', color: '#0284c7' }}></i>
-          <span>Kênh Cảnh Báo Telegram (Telegram SOC Dispatcher)</span>
-          <span
-            style={{
-              fontSize: '11px',
-              padding: '2px 8px',
-              borderRadius: '12px',
-              background: enabled ? '#dcfce7' : '#fee2e2',
-              color: enabled ? '#15803d' : '#991b1b',
-              fontWeight: 700,
-            }}
-          >
-            {enabled ? 'HOẠT ĐỘNG' : 'TẠM TẮT'}
-          </span>
-        </button>
+          {/* Sub-tab pills */}
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button
+              type="button"
+              onClick={() => setActiveTab('telegram')}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '7px 16px',
+                borderRadius: '8px',
+                border: activeTab === 'telegram' ? '1px solid #bae6fd' : '1px solid #e2e8f0',
+                background: activeTab === 'telegram' ? '#f0f9ff' : '#ffffff',
+                color: activeTab === 'telegram' ? '#0284c7' : '#64748b',
+                fontWeight: 700,
+                fontSize: '13px',
+                cursor: 'pointer',
+                transition: 'all 0.15s ease',
+              }}
+            >
+              <i className="fa-brands fa-telegram" style={{ color: activeTab === 'telegram' ? '#0284c7' : '#94a3b8' }}></i>
+              <span>Kênh Telegram Bot</span>
+              <span
+                style={{
+                  fontSize: '11px',
+                  padding: '1px 6px',
+                  borderRadius: '10px',
+                  background: enabled ? '#dcfce7' : '#f1f5f9',
+                  color: enabled ? '#15803d' : '#64748b',
+                  fontWeight: 800,
+                }}
+              >
+                {enabled ? 'Bật' : 'Tắt'}
+              </span>
+            </button>
 
-        <button
-          type="button"
-          onClick={() => setActiveTab('email')}
-          style={{
-            flex: 1,
-            padding: '11px 20px',
-            borderRadius: '9px',
-            border: activeTab === 'email' ? '1px solid #bfdbfe' : '1px solid transparent',
-            background: activeTab === 'email' ? '#eff6ff' : 'transparent',
-            color: activeTab === 'email' ? '#1d4ed8' : '#64748b',
-            fontWeight: 800,
-            fontSize: '13px',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '8px',
-            transition: 'all 0.15s ease',
-          }}
-        >
-          <i className="fa-solid fa-envelope-open-text" style={{ fontSize: '16px', color: '#2563eb' }}></i>
-          <span>Báo Cáo Kiểm Toán Gmail (Email Security Audit)</span>
-          <span
-            style={{
-              fontSize: '11px',
-              padding: '2px 8px',
-              borderRadius: '12px',
-              background: emailEnabled ? '#dcfce7' : '#fee2e2',
-              color: emailEnabled ? '#15803d' : '#991b1b',
-              fontWeight: 700,
-            }}
-          >
-            {emailEnabled ? 'HOẠT ĐỘNG' : 'TẠM TẮT'}
-          </span>
-        </button>
-      </div>
+            <button
+              type="button"
+              onClick={() => setActiveTab('email')}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '7px 16px',
+                borderRadius: '8px',
+                border: activeTab === 'email' ? '1px solid #fbcfe8' : '1px solid #e2e8f0',
+                background: activeTab === 'email' ? '#fdf2f8' : '#ffffff',
+                color: activeTab === 'email' ? '#db2777' : '#64748b',
+                fontWeight: 700,
+                fontSize: '13px',
+                cursor: 'pointer',
+                transition: 'all 0.15s ease',
+              }}
+            >
+              <i className="fa-solid fa-envelope" style={{ color: activeTab === 'email' ? '#db2777' : '#94a3b8' }}></i>
+              <span>Cảnh Báo & Báo Cáo Gmail</span>
+              <span
+                style={{
+                  fontSize: '11px',
+                  padding: '1px 6px',
+                  borderRadius: '10px',
+                  background: emailEnabled ? '#dcfce7' : '#f1f5f9',
+                  color: emailEnabled ? '#15803d' : '#64748b',
+                  fontWeight: 800,
+                }}
+              >
+                {emailEnabled ? 'Bật' : 'Tắt'}
+              </span>
+            </button>
+          </div>
 
-      {/* TAB 1: TELEGRAM BOT DISPATCHER */}
-      {activeTab === 'telegram' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', animation: 'fadeInPanel 0.2s ease' }}>
-          {/* Main Config Form */}
-          <div className="card" style={{ padding: '24px', borderRadius: '14px', background: '#ffffff', border: '1px solid #e2e8f0' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <div style={{ width: '38px', height: '38px', borderRadius: '10px', background: '#f0f9ff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <i className="fa-brands fa-telegram" style={{ fontSize: '20px', color: '#0284c7' }}></i>
-                </div>
+          <div style={{ fontSize: '12px', color: '#64748b' }}>
+            {activeTab === 'telegram' ? (
+              <span>Cảnh báo tức thời qua Telegram Bot API</span>
+            ) : (
+              <span>Gửi báo cáo an ninh qua giao thức SMTP TLS</span>
+            )}
+          </div>
+        </div>
+
+        {/* TAB 1: TELEGRAM BOT */}
+        {activeTab === 'telegram' && (
+          <form onSubmit={handleSaveTelegram} style={{ maxWidth: '850px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+              {/* Enable Switch */}
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '14px 18px',
+                  borderRadius: '10px',
+                  background: '#f8fafc',
+                  border: '1px solid #e2e8f0',
+                }}
+              >
                 <div>
-                  <h3 style={{ fontSize: '15px', fontWeight: 800, margin: 0, color: '#0f172a' }}>
-                    Cấu Hình Bot Cảnh Báo & Điều Khiển Từ Xa (Remote SOC Control)
-                  </h3>
-                  <p style={{ margin: '2px 0 0', fontSize: '12px', color: '#64748b' }}>
-                    Phát sóng cảnh báo trực tiếp khi WAF phát hiện tấn công và cho phép phản ứng nhanh qua nút bấm.
-                  </p>
+                  <div style={{ fontSize: '13.5px', fontWeight: 700, color: '#1e293b' }}>
+                    Kích Hoạt Phát Thanh Cảnh Báo Telegram
+                  </div>
+                  <div style={{ fontSize: '12px', color: '#64748b', marginTop: '2px' }}>
+                    Tự động gửi thông báo khi Coraza phát hiện tấn công L7 hoặc khi có sự cố hệ thống
+                  </div>
                 </div>
+                <label className="switch-green" style={{ margin: 0 }}>
+                  <input
+                    type="checkbox"
+                    checked={enabled}
+                    onChange={(e) => setEnabled(e.target.checked)}
+                  />
+                  <span className="slider round"></span>
+                </label>
               </div>
-              <label className="switch" style={{ margin: 0 }}>
-                <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
-                <span className="slider round"></span>
-              </label>
-            </div>
 
-            <form onSubmit={handleSaveTelegram}>
-              {/* Bot Token Input */}
-              <div style={{ marginBottom: '16px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                  <label style={{ fontSize: '12.5px', fontWeight: 700, color: '#1e293b' }}>
-                    Telegram Bot Token <span style={{ color: '#ef4444' }}>*</span>
-                  </label>
+              {/* Bot Token Field */}
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, color: '#1e293b', marginBottom: '6px' }}>
+                  Bot Token <span style={{ color: '#ef4444' }}>*</span>
+                </label>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <input
+                    type="password"
+                    placeholder="VD: 8920491204:AAHZFy2PookU8fWtZsyeyhEj6ItrTq0ofUA"
+                    value={token}
+                    onChange={(e) => setToken(e.target.value)}
+                    style={{
+                      flex: 1,
+                      height: '38px',
+                      padding: '0 12px',
+                      borderRadius: '8px',
+                      border: '1px solid #cbd5e1',
+                      fontSize: '13px',
+                      fontFamily: 'monospace',
+                    }}
+                  />
                   <button
                     type="button"
                     onClick={handleVerifyToken}
                     disabled={verifying}
                     style={{
-                      background: 'none',
-                      border: 'none',
-                      color: '#0284c7',
-                      fontSize: '12px',
-                      cursor: 'pointer',
+                      padding: '0 16px',
+                      height: '38px',
+                      borderRadius: '8px',
+                      border: '1px solid #cbd5e1',
+                      background: '#ffffff',
+                      color: '#0f172a',
+                      fontSize: '12.5px',
                       fontWeight: 700,
-                      display: 'flex',
+                      cursor: 'pointer',
+                      display: 'inline-flex',
                       alignItems: 'center',
-                      gap: '4px',
+                      gap: '6px',
                     }}
                   >
-                    <i className={`fa-solid ${verifying ? 'fa-spinner fa-spin' : 'fa-circle-check'}`}></i>
-                    <span>Kiểm tra Token</span>
+                    <i className={`fa-solid ${verifying ? 'fa-spinner fa-spin' : 'fa-check'}`}></i>
+                    <span>Kiểm Tra</span>
                   </button>
                 </div>
-                <input
-                  type="password"
-                  value={token}
-                  onChange={(e) => setToken(e.target.value)}
-                  placeholder="VD: 8920491204:AAHZFy2PookU8fWtZsyeyhEj6ItrTq0ofUA"
-                  style={{
-                    width: '100%',
-                    height: '40px',
-                    padding: '0 12px',
-                    borderRadius: '8px',
-                    border: '1px solid #cbd5e1',
-                    fontSize: '13px',
-                    fontFamily: 'monospace',
-                  }}
-                  required
-                />
-                {botInfo && (
-                  <div style={{ marginTop: '6px', fontSize: '12px', color: '#16a34a', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <i className="fa-solid fa-robot"></i>
-                    <span>
-                      Đã xác thực: <strong>@{botInfo.username}</strong> ({botInfo.first_name})
-                    </span>
-                  </div>
-                )}
+                <div style={{ fontSize: '11.5px', color: '#64748b', marginTop: '5px' }}>
+                  Lấy token bằng cách chat với <strong>@BotFather</strong> trên Telegram.
+                </div>
               </div>
 
-              {/* Chat IDs Input */}
-              <div style={{ marginBottom: '20px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                  <label style={{ fontSize: '12.5px', fontWeight: 700, color: '#1e293b' }}>
-                    Danh Sách Target Chat ID (Cá nhân hoặc Nhóm) <span style={{ color: '#ef4444' }}>*</span>
-                  </label>
+              {/* Bot Verification Badge */}
+              {botInfo && (
+                <div
+                  style={{
+                    padding: '12px 16px',
+                    borderRadius: '8px',
+                    background: '#f0fdf4',
+                    border: '1px solid #bbf7d0',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px',
+                    fontSize: '12.5px',
+                    color: '#166534',
+                  }}
+                >
+                  <i className="fa-solid fa-circle-check" style={{ fontSize: '16px', color: '#16a34a' }}></i>
+                  <div>
+                    Bot xác thực: <strong>{botInfo.first_name}</strong> (<code>@{botInfo.username}</code>) · ID: {botInfo.id}
+                  </div>
+                </div>
+              )}
+
+              {/* Chat ID Field */}
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, color: '#1e293b', marginBottom: '6px' }}>
+                  Danh Sách Chat ID (Hỗ trợ vừa gửi Nhóm vừa gửi Cá nhân) <span style={{ color: '#ef4444' }}>*</span>
+                </label>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <input
+                    type="text"
+                    placeholder="VD: -1003880486094, 8732919865 (phân tách nhiều ID bằng dấu phẩy)"
+                    value={chatId}
+                    onChange={(e) => setChatId(e.target.value)}
+                    style={{
+                      flex: 1,
+                      height: '38px',
+                      padding: '0 12px',
+                      borderRadius: '8px',
+                      border: '1px solid #cbd5e1',
+                      fontSize: '13px',
+                      fontFamily: 'monospace',
+                    }}
+                  />
                   <button
                     type="button"
                     onClick={handleDetectChatId}
                     disabled={detecting}
                     style={{
-                      background: 'none',
-                      border: 'none',
-                      color: '#10b981',
-                      fontSize: '12px',
-                      cursor: 'pointer',
+                      padding: '0 16px',
+                      height: '38px',
+                      borderRadius: '8px',
+                      border: '1px solid #bae6fd',
+                      background: '#f0f9ff',
+                      color: '#0284c7',
+                      fontSize: '12.5px',
                       fontWeight: 700,
-                      display: 'flex',
+                      cursor: 'pointer',
+                      display: 'inline-flex',
                       alignItems: 'center',
-                      gap: '4px',
+                      gap: '6px',
                     }}
-                    title="Tìm Chat ID tự động từ tin nhắn mới nhất trong nhóm hoặc cá nhân"
                   >
                     <i className={`fa-solid ${detecting ? 'fa-spinner fa-spin' : 'fa-wand-magic-sparkles'}`}></i>
-                    <span>Tự động tìm Chat ID</span>
+                    <span>Dò Chat ID</span>
                   </button>
                 </div>
-                <input
-                  type="text"
-                  value={chatId}
-                  onChange={(e) => setChatId(e.target.value)}
-                  placeholder="VD: -1003880486094, 8732919865"
-                  style={{
-                    width: '100%',
-                    height: '40px',
-                    padding: '0 12px',
-                    borderRadius: '8px',
-                    border: '1px solid #cbd5e1',
-                    fontSize: '13px',
-                    fontFamily: 'monospace',
-                  }}
-                  required
-                />
-                <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: '11.5px', color: '#64748b' }}>Các kênh đang nhận cảnh báo:</span>
-                  {targetList.length === 0 ? (
-                    <span style={{ fontSize: '11px', color: '#94a3b8', fontStyle: 'italic' }}>Chưa có kênh nào</span>
-                  ) : (
-                    targetList.map((id, idx) => (
-                      <span
-                        key={idx}
-                        style={{
-                          fontSize: '11.5px',
-                          padding: '2px 8px',
-                          borderRadius: '6px',
-                          background: id.startsWith('-') ? '#f0fdf4' : '#eff6ff',
-                          color: id.startsWith('-') ? '#15803d' : '#1d4ed8',
-                          border: `1px solid ${id.startsWith('-') ? '#bbf7d0' : '#bfdbfe'}`,
-                          fontWeight: 700,
-                          fontFamily: 'monospace',
-                        }}
-                      >
-                        {id.startsWith('-') ? '👥 Group: ' : '👤 Private: '}
-                        {id}
-                      </span>
-                    ))
-                  )}
+                <div style={{ fontSize: '11.5px', color: '#64748b', marginTop: '5px' }}>
+                  Chat ID nhóm thường bắt đầu bằng dấu trừ <code>-100...</code>, Chat ID cá nhân là số nguyên dương.
                 </div>
               </div>
 
-              {/* Action Buttons */}
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <button
-                    type="button"
-                    onClick={handleTestTelegram}
-                    disabled={testing}
-                    style={{
-                      height: '38px',
-                      padding: '0 16px',
-                      borderRadius: '8px',
-                      border: '1px solid #cbd5e1',
-                      background: '#ffffff',
-                      color: '#0f172a',
-                      fontSize: '12.5px',
-                      fontWeight: 700,
-                      cursor: 'pointer',
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '6px',
-                    }}
-                  >
-                    <i className={`fa-solid ${testing ? 'fa-spinner fa-spin' : 'fa-paper-plane'}`} style={{ color: '#0284c7' }}></i>
-                    <span>Gửi Cảnh Báo Mẫu</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={handleSimulateDemoBan}
-                    disabled={demoRunning}
-                    style={{
-                      height: '38px',
-                      padding: '0 16px',
-                      borderRadius: '8px',
-                      border: '1px solid #c7d2fe',
-                      background: '#eef2ff',
-                      color: '#4338ca',
-                      fontSize: '12.5px',
-                      fontWeight: 700,
-                      cursor: 'pointer',
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '6px',
-                    }}
-                    title="Kích hoạt kịch bản cấm IP 20 giây và tự động gỡ theo đếm ngược để biểu diễn"
-                  >
-                    <i className={`fa-solid ${demoRunning ? 'fa-spinner fa-spin' : 'fa-bolt'}`}></i>
-                    <span>⚡ Demo Chặn 20s</span>
-                  </button>
+              {/* Channels Preview */}
+              {targetList.length > 0 && (
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  {targetList.map((id, idx) => {
+                    const isGroup = id.startsWith('-');
+                    return (
+                      <span
+                        key={idx}
+                        style={{
+                          fontSize: '12px',
+                          fontWeight: 700,
+                          padding: '4px 10px',
+                          borderRadius: '6px',
+                          background: isGroup ? '#eff6ff' : '#f0fdf4',
+                          color: isGroup ? '#1d4ed8' : '#15803d',
+                          border: `1px solid ${isGroup ? '#bfdbfe' : '#bbf7d0'}`,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                        }}
+                      >
+                        <i className={`fa-solid ${isGroup ? 'fa-users' : 'fa-user'}`}></i>
+                        <span>{isGroup ? 'Nhóm:' : 'Cá nhân:'} <code>{id}</code></span>
+                      </span>
+                    );
+                  })}
                 </div>
+              )}
 
+              {/* Demo Ban 20s Card */}
+              <div
+                style={{
+                  background: '#fefce8',
+                  border: '1px solid #fef08a',
+                  borderRadius: '10px',
+                  padding: '16px',
+                }}
+              >
+                <div style={{ fontSize: '13px', fontWeight: 800, color: '#854d0e', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <i className="fa-solid fa-stopwatch"></i>
+                  Kịch Bản Thử Nghiệm: Chặn IP 20 Giây & Tự Động Gỡ Bỏ
+                </div>
+                <p style={{ fontSize: '12px', color: '#a16207', margin: '0 0 12px 0', lineHeight: 1.5 }}>
+                  Bấm nút bên dưới để mô phỏng sự cố: WAF sẽ cấm IP <code>203.0.113.88</code> trong đúng 20 giây, bot gửi thông báo vào Telegram, bảng Blacklist đếm ngược và tự động gỡ bỏ tức thời khi hết hạn!
+                </p>
+                <button
+                  type="button"
+                  onClick={handleSimulateDemoBan}
+                  disabled={demoRunning}
+                  style={{
+                    padding: '8px 16px',
+                    borderRadius: '6px',
+                    border: 'none',
+                    background: '#eab308',
+                    color: '#ffffff',
+                    fontSize: '12.5px',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                  }}
+                >
+                  <i className={`fa-solid ${demoRunning ? 'fa-spinner fa-spin' : 'fa-bolt'}`}></i>
+                  <span>Bắt Đầu Demo Chặn 20s</span>
+                </button>
+              </div>
+
+              {/* Action Buttons */}
+              <div style={{ display: 'flex', gap: '10px', paddingTop: '10px' }}>
                 <button
                   type="submit"
                   disabled={saving}
                   style={{
-                    height: '38px',
-                    padding: '0 24px',
+                    padding: '9px 24px',
                     borderRadius: '8px',
                     border: 'none',
-                    background: '#0284c7',
+                    background: '#10b981',
                     color: '#ffffff',
                     fontSize: '13px',
-                    fontWeight: 800,
+                    fontWeight: 700,
                     cursor: 'pointer',
                     display: 'inline-flex',
                     alignItems: 'center',
-                    gap: '6px',
-                    boxShadow: '0 2px 6px rgba(2, 132, 199, 0.3)',
+                    gap: '8px',
+                    boxShadow: '0 2px 6px rgba(16, 185, 129, 0.25)',
                   }}
                 >
-                  <i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : 'fa-check'}`}></i>
+                  <i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : 'fa-floppy-disk'}`}></i>
                   <span>Lưu Cấu Hình Telegram</span>
                 </button>
-              </div>
-            </form>
-          </div>
 
-          {/* Quick Guide & Interactive Demo Card */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '16px' }}>
-            <div className="card" style={{ padding: '20px', borderRadius: '12px', background: '#f8fafc', border: '1px solid #e2e8f0' }}>
-              <h4 style={{ fontSize: '13.5px', fontWeight: 800, color: '#0f172a', margin: '0 0 10px 0', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <i className="fa-solid fa-lightbulb" style={{ color: '#eab308' }}></i>
-                Cách Lấy Chat ID Nhóm Trong 3 Giây
-              </h4>
-              <ol style={{ margin: 0, paddingLeft: '18px', fontSize: '12px', color: '#475569', lineHeight: 1.7 }}>
-                <li>Thêm Bot vào nhóm Telegram của bạn và gán quyền Admin.</li>
-                <li>Gõ lệnh <code>/link</code> hoặc <code>/id</code> trực tiếp vào trong nhóm.</li>
-                <li>Hệ thống WAF sẽ tự động kết nối nhóm và kích hoạt phát sóng cảnh báo!</li>
-              </ol>
-            </div>
-
-            <div className="card" style={{ padding: '20px', borderRadius: '12px', background: '#f8fafc', border: '1px solid #e2e8f0' }}>
-              <h4 style={{ fontSize: '13.5px', fontWeight: 800, color: '#0f172a', margin: '0 0 10px 0', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <i className="fa-solid fa-terminal" style={{ color: '#0284c7' }}></i>
-                Các Lệnh Điều Khiển Từ Xa (Remote Commands)
-              </h4>
-              <div style={{ fontSize: '12px', color: '#475569', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
-                <div><code>/stats</code> : Thống kê WAF</div>
-                <div><code>/latest</code> : 5 vi phạm gần nhất</div>
-                <div><code>/status</code> : Trạng thái CPU/RAM</div>
-                <div><code>/demo</code> : Thử chặn 20s</div>
-                <div><code>/ban &lt;IP&gt;</code> : Chặn địa chỉ IP</div>
-                <div><code>/unban &lt;IP&gt;</code> : Gỡ cấm IP</div>
+                <button
+                  type="button"
+                  onClick={handleTestTelegram}
+                  disabled={testing}
+                  style={{
+                    padding: '9px 18px',
+                    borderRadius: '8px',
+                    border: '1px solid #cbd5e1',
+                    background: '#ffffff',
+                    color: '#0f172a',
+                    fontSize: '13px',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                  }}
+                >
+                  <i className={`fa-solid ${testing ? 'fa-spinner fa-spin' : 'fa-paper-plane'}`}></i>
+                  <span>Gửi Bản Tin Thử Nghiệm</span>
+                </button>
               </div>
             </div>
-          </div>
-        </div>
-      )}
+          </form>
+        )}
 
-      {/* TAB 2: GMAIL / SMTP SECURITY AUDIT */}
-      {activeTab === 'email' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', animation: 'fadeInPanel 0.2s ease' }}>
-          {/* Main Email Form */}
-          <div className="card" style={{ padding: '24px', borderRadius: '14px', background: '#ffffff', border: '1px solid #e2e8f0' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <div style={{ width: '38px', height: '38px', borderRadius: '10px', background: '#eff6ff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <i className="fa-solid fa-envelope" style={{ fontSize: '18px', color: '#2563eb' }}></i>
-                </div>
+        {/* TAB 2: EMAIL SMTP */}
+        {activeTab === 'email' && (
+          <form onSubmit={handleSaveEmail} style={{ maxWidth: '850px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+              {/* Enable Switch */}
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '14px 18px',
+                  borderRadius: '10px',
+                  background: '#f8fafc',
+                  border: '1px solid #e2e8f0',
+                }}
+              >
                 <div>
-                  <h3 style={{ fontSize: '15px', fontWeight: 800, margin: 0, color: '#0f172a' }}>
-                    Cấu Hình Báo Cáo Kiểm Toán Qua Gmail (SMTP Executive Report)
-                  </h3>
-                  <p style={{ margin: '2px 0 0', fontSize: '12px', color: '#64748b' }}>
-                    Gửi báo cáo định kỳ tổng hợp số liệu lưu lượng, vi phạm CRS và danh sách tấn công về hòm thư lãnh đạo.
-                  </p>
+                  <div style={{ fontSize: '13.5px', fontWeight: 700, color: '#1e293b' }}>
+                    Kích Hoạt Gửi Báo Cáo Định Kỳ Qua Gmail
+                  </div>
+                  <div style={{ fontSize: '12px', color: '#64748b', marginTop: '2px' }}>
+                    Tổng hợp thống kê sự cố, tỷ lệ chặn và danh sách Top IP tấn công gửi về email
+                  </div>
                 </div>
-              </div>
-              <label className="switch" style={{ margin: 0 }}>
-                <input type="checkbox" checked={emailEnabled} onChange={(e) => setEmailEnabled(e.target.checked)} />
-                <span className="slider round"></span>
-              </label>
-            </div>
-
-            <form onSubmit={handleSaveEmail}>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px', marginBottom: '16px' }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 700, color: '#1e293b', marginBottom: '6px' }}>
-                    Máy Chủ SMTP Host
-                  </label>
+                <label className="switch-green" style={{ margin: 0 }}>
                   <input
-                    type="text"
-                    value={smtpHost}
-                    onChange={(e) => setSmtpHost(e.target.value)}
-                    placeholder="smtp.gmail.com"
-                    style={{ width: '100%', height: '40px', padding: '0 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px' }}
-                    required
+                    type="checkbox"
+                    checked={emailEnabled}
+                    onChange={(e) => setEmailEnabled(e.target.checked)}
                   />
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 700, color: '#1e293b', marginBottom: '6px' }}>
-                    Cổng SMTP (Port)
-                  </label>
-                  <input
-                    type="number"
-                    value={smtpPort}
-                    onChange={(e) => setSmtpPort(e.target.value)}
-                    placeholder="587 (STARTTLS) hoặc 465 (SSL)"
-                    style={{ width: '100%', height: '40px', padding: '0 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px' }}
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 700, color: '#1e293b', marginBottom: '6px' }}>
-                    Địa Chỉ Email Người Gửi (Sender Gmail)
-                  </label>
-                  <input
-                    type="email"
-                    value={senderEmail}
-                    onChange={(e) => setSenderEmail(e.target.value)}
-                    placeholder="VD: soc.waf.alert@gmail.com"
-                    style={{ width: '100%', height: '40px', padding: '0 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px' }}
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 700, color: '#1e293b', marginBottom: '6px' }}>
-                    Mật Khẩu Ứng Dụng (App Password 16 Ký Tự)
-                  </label>
-                  <input
-                    type="password"
-                    value={appPassword}
-                    onChange={(e) => setAppPassword(e.target.value)}
-                    placeholder="VD: xxxx yyyy zzzz wwww"
-                    style={{ width: '100%', height: '40px', padding: '0 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', fontFamily: 'monospace' }}
-                    required
-                  />
-                </div>
+                  <span className="slider round"></span>
+                </label>
               </div>
 
               {/* Recipient */}
-              <div style={{ marginBottom: '20px' }}>
-                <label style={{ display: 'block', fontSize: '12.5px', fontWeight: 700, color: '#1e293b', marginBottom: '6px' }}>
-                  Email Người Nhận Báo Cáo (Recipient) <span style={{ color: '#ef4444' }}>*</span>
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, color: '#1e293b', marginBottom: '6px' }}>
+                  Email Người Nhận Báo Cáo <span style={{ color: '#ef4444' }}>*</span>
                 </label>
                 <input
                   type="email"
+                  placeholder="VD: sep@doanhnghiep.com, security-audit@company.vn"
                   value={recipient}
                   onChange={(e) => setRecipient(e.target.value)}
-                  placeholder="VD: manager@company.vn hoặc email của bạn"
-                  style={{ width: '100%', height: '40px', padding: '0 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px' }}
-                  required
+                  style={{
+                    width: '100%',
+                    height: '38px',
+                    padding: '0 12px',
+                    borderRadius: '8px',
+                    border: '1px solid #cbd5e1',
+                    fontSize: '13px',
+                  }}
                 />
               </div>
 
-              {/* Actions */}
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <button
-                    type="button"
-                    onClick={handleSendEmailTest}
-                    disabled={sendingEmailTest}
+              {/* Sender & App Password */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, color: '#1e293b', marginBottom: '6px' }}>
+                    Tài Khoản Gmail Gửi Đi (Sender) <span style={{ color: '#ef4444' }}>*</span>
+                  </label>
+                  <input
+                    type="email"
+                    placeholder="VD: bot-waf-alert@gmail.com"
+                    value={senderEmail}
+                    onChange={(e) => setSenderEmail(e.target.value)}
                     style={{
+                      width: '100%',
                       height: '38px',
-                      padding: '0 16px',
+                      padding: '0 12px',
                       borderRadius: '8px',
                       border: '1px solid #cbd5e1',
-                      background: '#ffffff',
-                      color: '#0f172a',
-                      fontSize: '12.5px',
-                      fontWeight: 700,
-                      cursor: 'pointer',
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '6px',
+                      fontSize: '13px',
                     }}
-                  >
-                    <i className={`fa-solid ${sendingEmailTest ? 'fa-spinner fa-spin' : 'fa-paper-plane'}`} style={{ color: '#2563eb' }}></i>
-                    <span>Gửi Email Test Kết Nối</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={handleSendEmailReport}
-                    disabled={sendingReport}
-                    style={{
-                      height: '38px',
-                      padding: '0 16px',
-                      borderRadius: '8px',
-                      border: '1px solid #bfdbfe',
-                      background: '#eff6ff',
-                      color: '#1d4ed8',
-                      fontSize: '12.5px',
-                      fontWeight: 700,
-                      cursor: 'pointer',
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '6px',
-                    }}
-                  >
-                    <i className={`fa-solid ${sendingReport ? 'fa-spinner fa-spin' : 'fa-file-invoice'}`}></i>
-                    <span>Xuất & Gửi Báo Cáo Kiểm Toán HTML</span>
-                  </button>
+                  />
                 </div>
 
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, color: '#1e293b', marginBottom: '6px' }}>
+                    Google App Password (16 ký tự) <span style={{ color: '#ef4444' }}>*</span>
+                  </label>
+                  <input
+                    type="password"
+                    placeholder="VD: abcd efgh ijkl mnop"
+                    value={appPassword}
+                    onChange={(e) => setAppPassword(e.target.value)}
+                    style={{
+                      width: '100%',
+                      height: '38px',
+                      padding: '0 12px',
+                      borderRadius: '8px',
+                      border: '1px solid #cbd5e1',
+                      fontSize: '13px',
+                      fontFamily: 'monospace',
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div style={{ padding: '12px 14px', borderRadius: '8px', background: '#eff6ff', border: '1px solid #bfdbfe', fontSize: '12px', color: '#1e40af' }}>
+                <i className="fa-solid fa-circle-info" style={{ marginRight: '6px' }}></i>
+                <strong>Cách tạo App Password:</strong> Mở <code>myaccount.google.com</code> → Bảo mật → Xác minh 2 bước → Mật khẩu ứng dụng (App Passwords) → Tạo mật khẩu 16 chữ cái cho WAF.
+              </div>
+
+              {/* Action Buttons */}
+              <div style={{ display: 'flex', gap: '10px', paddingTop: '10px', flexWrap: 'wrap' }}>
                 <button
                   type="submit"
                   disabled={savingEmail}
                   style={{
-                    height: '38px',
-                    padding: '0 24px',
+                    padding: '9px 24px',
                     borderRadius: '8px',
                     border: 'none',
-                    background: '#2563eb',
+                    background: '#10b981',
                     color: '#ffffff',
                     fontSize: '13px',
-                    fontWeight: 800,
+                    fontWeight: 700,
                     cursor: 'pointer',
                     display: 'inline-flex',
                     alignItems: 'center',
-                    gap: '6px',
-                    boxShadow: '0 2px 6px rgba(37, 99, 235, 0.3)',
+                    gap: '8px',
+                    boxShadow: '0 2px 6px rgba(16, 185, 129, 0.25)',
                   }}
                 >
-                  <i className={`fa-solid ${savingEmail ? 'fa-spinner fa-spin' : 'fa-check'}`}></i>
-                  <span>Lưu Cấu Hình Gmail</span>
+                  <i className={`fa-solid ${savingEmail ? 'fa-spinner fa-spin' : 'fa-floppy-disk'}`}></i>
+                  <span>Lưu Cấu Hình Email</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleTestEmail}
+                  disabled={sendingEmailTest}
+                  style={{
+                    padding: '9px 18px',
+                    borderRadius: '8px',
+                    border: '1px solid #cbd5e1',
+                    background: '#ffffff',
+                    color: '#0f172a',
+                    fontSize: '13px',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                  }}
+                >
+                  <i className={`fa-solid ${sendingEmailTest ? 'fa-spinner fa-spin' : 'fa-envelope'}`}></i>
+                  <span>Gửi Email Thử Nghiệm</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleSendReportNow}
+                  disabled={sendingReport}
+                  style={{
+                    padding: '9px 18px',
+                    borderRadius: '8px',
+                    border: '1px solid #fca5a5',
+                    background: '#fef2f2',
+                    color: '#dc2626',
+                    fontSize: '13px',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                  }}
+                >
+                  <i className={`fa-solid ${sendingReport ? 'fa-spinner fa-spin' : 'fa-file-pdf'}`}></i>
+                  <span>Trích Xuất & Gửi Báo Cáo Ngay</span>
                 </button>
               </div>
-            </form>
-          </div>
-
-          {/* Guide Card */}
-          <div className="card" style={{ padding: '20px', borderRadius: '12px', background: '#f8fafc', border: '1px solid #e2e8f0' }}>
-            <h4 style={{ fontSize: '13.5px', fontWeight: 800, color: '#0f172a', margin: '0 0 10px 0', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <i className="fa-brands fa-google" style={{ color: '#ea4335' }}></i>
-              Hướng Dẫn Tạo Mật Khẩu Ứng Dụng (Gmail App Password)
-            </h4>
-            <div style={{ fontSize: '12px', color: '#475569', lineHeight: 1.7 }}>
-              <p style={{ margin: '0 0 6px 0' }}>
-                Do chính sách bảo mật của Google, bạn không thể dùng mật khẩu đăng nhập tài khoản thông thường. Hãy tạo Mật khẩu ứng dụng 16 ký tự:
-              </p>
-              <ol style={{ margin: 0, paddingLeft: '18px' }}>
-                <li>
-                  Truy cập{' '}
-                  <a href="https://myaccount.google.com/security" target="_blank" rel="noreferrer" style={{ color: '#2563eb', fontWeight: 600 }}>
-                    Tài khoản Google &gt; Bảo mật
-                  </a>{' '}
-                  và đảm bảo đã bật <strong>Xác minh 2 bước</strong>.
-                </li>
-                <li>
-                  Tìm mục <strong>Mật khẩu ứng dụng (App passwords)</strong>.
-                </li>
-                <li>
-                  Tạo tên mới (VD: <code>Coraza WAF SOC</code>) và copy chuỗi 16 ký tự dán vào ô Mật khẩu ứng dụng ở trên.
-                </li>
-              </ol>
             </div>
-          </div>
-        </div>
-      )}
+          </form>
+        )}
+      </div>
     </div>
   );
 }

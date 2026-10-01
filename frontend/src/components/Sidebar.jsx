@@ -3,7 +3,6 @@ import React from 'react';
 export default function Sidebar({ activeTab, setActiveTab, totalBlocked = 0 }) {
   const navItems = [
     { id: 'overview', icon: 'fa-solid fa-house', label: 'Overview' },
-    { id: 'map', icon: 'fa-solid fa-satellite-dish', label: 'SOC Command' },
     { id: 'website', icon: 'fa-solid fa-globe', label: 'Website' },
     { id: 'logs', icon: 'fa-solid fa-file-shield', label: 'Interception log', badge: totalBlocked },
     { id: 'ip-control', icon: 'fa-solid fa-user-shield', label: 'Black/white list' },

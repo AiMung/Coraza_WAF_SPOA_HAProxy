@@ -81,7 +81,7 @@ export default function App() {
 
   const loadLogs = useCallback(async (ip = '', type = '', q = '') => {
     try {
-      const data = await wafApi.logs({ limit: 500, ip, type, q });
+      const data = await wafApi.logs({ limit: 2000, ip, type, q });
       setLogs(data.data || []);
       if (data && typeof data.total_count === 'number') {
         setTotalLogsCount(data.total_count);
@@ -138,8 +138,8 @@ export default function App() {
 
     const connectWS = () => {
       socket = new WebSocket(WS_URL);
-      socket.onopen = () => setWsConnected(true);
       socket.onmessage = (event) => {
+        try {
           const msg = JSON.parse(event.data);
 
           // Handle Real-Time IP Access Control Sync (Blacklist / Whitelist / Expiration)
@@ -329,7 +329,6 @@ const isValidIPOrCIDR = (val) => {
 
   const pageTitles = {
     overview: 'Range Overview · SOC Command Center',
-    map: 'SOC Security Operations Center · Live Threat Radar',
     website: 'Protected Virtual Hosts',
     logs: 'Interception Logs · Threat Forensics',
     'ip-control': 'IP Access Control',
@@ -342,7 +341,7 @@ const isValidIPOrCIDR = (val) => {
   return (
     <div className="aawaf-layout">
       <Sidebar
-        activeTab={activeTab}
+        activeTab={activeTab === 'map' ? 'overview' : activeTab}
         setActiveTab={setActiveTab}
         totalBlocked={stats.total_attacks || logs.length}
       />
@@ -362,7 +361,7 @@ const isValidIPOrCIDR = (val) => {
 
         <div className="aawaf-content">
           <ErrorBoundary key={activeTab}>
-          {activeTab === 'overview' && (
+          {(activeTab === 'overview' || activeTab === 'map') && (
             <Overview
               stats={stats}
               liveLogs={liveLogs}
@@ -373,16 +372,6 @@ const isValidIPOrCIDR = (val) => {
               onSimulateAttack={handleSimulateAttack}
               onAddBlacklist={handleDirectAddBlacklist}
               onRefresh={() => loadStats()}
-            />
-          )}
-
-          {activeTab === 'map' && (
-            <AttackMap
-              attackPins={attackPins}
-              liveLogs={liveLogs}
-              stats={stats}
-              onSimulateAttack={handleSimulateAttack}
-              onAddBlacklist={handleDirectAddBlacklist}
             />
           )}
 
