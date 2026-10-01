@@ -193,7 +193,7 @@ SecRule REMOTE_ADDR "@ipMatchFromFile /etc/coraza-spoa/rules/blacklist.ips" \
 // StartIPRulesExpirationDaemon automatically cleans up expired bans and restores normal access
 func StartIPRulesExpirationDaemon() {
 	go func() {
-		ticker := time.NewTicker(5 * time.Second)
+		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
 
 		for range ticker.C {

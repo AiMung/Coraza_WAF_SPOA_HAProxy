@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"html"
 	"log"
 	"net"
 	"net/http"
@@ -34,11 +35,44 @@ type InlineKeyboardMarkup struct {
 	InlineKeyboard [][]InlineKeyboardButton `json:"inline_keyboard"`
 }
 
+type KeyboardButton struct {
+	Text string `json:"text"`
+}
+
+type ReplyKeyboardMarkup struct {
+	Keyboard        [][]KeyboardButton `json:"keyboard"`
+	ResizeKeyboard  bool               `json:"resize_keyboard"`
+	IsPersistent    bool               `json:"is_persistent"`
+	OneTimeKeyboard bool               `json:"one_time_keyboard"`
+}
+
+// GetMainReplyMenu returns a persistent bottom keyboard menu for instant touch control
+func GetMainReplyMenu() *ReplyKeyboardMarkup {
+	return &ReplyKeyboardMarkup{
+		Keyboard: [][]KeyboardButton{
+			{
+				{Text: "📊 Thống Kê WAF"},
+				{Text: "🔍 5 Tấn Công Gần Nhất"},
+			},
+			{
+				{Text: "🖥️ Trạng Thái SOC"},
+				{Text: "⚡ Demo Chặn 20s"},
+			},
+			{
+				{Text: "📋 Trợ Giúp / Lệnh"},
+			},
+		},
+		ResizeKeyboard:  true,
+		IsPersistent:    true,
+		OneTimeKeyboard: false,
+	}
+}
+
 type TelegramSendPayload struct {
-	ChatID      string                `json:"chat_id"`
-	Text        string                `json:"text"`
-	ParseMode   string                `json:"parse_mode"`
-	ReplyMarkup *InlineKeyboardMarkup `json:"reply_markup,omitempty"`
+	ChatID      string      `json:"chat_id"`
+	Text        string      `json:"text"`
+	ParseMode   string      `json:"parse_mode"`
+	ReplyMarkup interface{} `json:"reply_markup,omitempty"`
 }
 
 type TelegramUpdate struct {
@@ -127,13 +161,18 @@ func GetTelegramConfig() database.TelegramConfig {
 	return tgConfig
 }
 
-// SendTelegramMessage sends a basic or styled HTML message to Telegram
+// SendTelegramMessage sends a basic or styled HTML message with the persistent touch menu
 func SendTelegramMessage(token, chatID, message string) error {
-	return SendTelegramMessageWithKeyboard(token, chatID, message, nil)
+	return SendTelegramMessageWithReplyMarkup(token, chatID, message, GetMainReplyMenu())
 }
 
 // SendTelegramMessageWithKeyboard sends an HTML message with optional Inline Buttons
 func SendTelegramMessageWithKeyboard(token, chatID, message string, markup *InlineKeyboardMarkup) error {
+	return SendTelegramMessageWithReplyMarkup(token, chatID, message, markup)
+}
+
+// SendTelegramMessageWithReplyMarkup sends an HTML message with arbitrary keyboard markup
+func SendTelegramMessageWithReplyMarkup(token, chatID, message string, markup interface{}) error {
 	if token == "" || chatID == "" {
 		return fmt.Errorf("bot token or chat ID is empty")
 	}
@@ -209,6 +248,17 @@ func SendAttackAlert(logItem database.AttackLog) {
 
 	geo := LookupGeoIP(logItem.ClientIP)
 
+	safeURI := html.EscapeString(logItem.URI)
+	if len(safeURI) > 120 {
+		safeURI = safeURI[:120] + "..."
+	}
+	safeAttackType := html.EscapeString(logItem.AttackType)
+	safeClientIP := html.EscapeString(logItem.ClientIP)
+	safeAction := html.EscapeString(logItem.Action)
+	safeRuleMsg := html.EscapeString(logItem.RuleMsg)
+	safeMethod := html.EscapeString(logItem.Method)
+	safeTimestamp := html.EscapeString(logItem.Timestamp)
+
 	msg := fmt.Sprintf(
 		"🚨 <b>[CORAZA WAF ALERT] Phát Hiện Tấn Công!</b>\n\n"+
 			"• <b>Loại tấn công:</b> <code>%s</code>\n"+
@@ -219,27 +269,31 @@ func SendAttackAlert(logItem database.AttackLog) {
 			"• <b>Method & URI:</b> <code>%s %s</code>\n"+
 			"• <b>Thời gian:</b> <i>%s</i>\n\n"+
 			"🛡️ <i>Coraza SPOA WAF đã tự động phát hiện và chặn cuộc tấn công. Bạn có thể nhấn nút bên dưới để xử lý IP:</i>",
-		logItem.AttackType,
-		logItem.ClientIP,
+		safeAttackType,
+		safeClientIP,
 		geo.Flag, geo.Country,
-		logItem.Action,
+		safeAction,
 		logItem.RuleID,
-		logItem.RuleMsg,
-		logItem.Method,
-		logItem.URI,
-		logItem.Timestamp,
+		safeRuleMsg,
+		safeMethod,
+		safeURI,
+		safeTimestamp,
 	)
 
-	// Interactive Inline Keyboard
+	// Interactive Inline Keyboard with 20s Demo & 15m Options
 	markup := &InlineKeyboardMarkup{
 		InlineKeyboard: [][]InlineKeyboardButton{
 			{
-				{Text: fmt.Sprintf("⛔ Chặn IP %s", logItem.ClientIP), CallbackData: fmt.Sprintf("ban:%s", logItem.ClientIP)},
-				{Text: "⚪ Whitelist IP", CallbackData: fmt.Sprintf("white:%s", logItem.ClientIP)},
+				{Text: "⚡ Chặn 20s (Demo)", CallbackData: fmt.Sprintf("ban20s:%s", logItem.ClientIP)},
+				{Text: "⛔ Chặn 15m", CallbackData: fmt.Sprintf("ban:%s", logItem.ClientIP)},
 			},
 			{
-				{Text: "📊 Thống kê WAF", CallbackData: "cmd_stats"},
-				{Text: "🔍 Nhật ký gần nhất", CallbackData: "cmd_latest"},
+				{Text: "⚪ Whitelist IP", CallbackData: fmt.Sprintf("white:%s", logItem.ClientIP)},
+				{Text: "🔍 5 Tấn Công Gần Nhất", CallbackData: "cmd_latest"},
+			},
+			{
+				{Text: "📊 Thống Kê WAF", CallbackData: "cmd_stats"},
+				{Text: "🖥️ Trạng Thái SOC", CallbackData: "cmd_status"},
 			},
 		},
 	}
@@ -298,9 +352,35 @@ func StartTelegramBot() {
 	RestartTelegramBot()
 }
 
+// registerTelegramCommands registers bot commands to display Telegram's native [/] Menu button
+func registerTelegramCommands(token string) {
+	if token == "" {
+		return
+	}
+	url := fmt.Sprintf("https://api.telegram.org/bot%s/setMyCommands", token)
+	payload := map[string]interface{}{
+		"commands": []map[string]string{
+			{"command": "menu", "description": "📱 Mở bàn phím Menu điều khiển nhanh"},
+			{"command": "stats", "description": "📊 Thống kê lưu lượng & vi phạm WAF"},
+			{"command": "latest", "description": "🔍 Xem 5 cuộc tấn công gần nhất"},
+			{"command": "status", "description": "🖥️ Trạng thái máy chủ, RAM & SOC"},
+			{"command": "demo", "description": "⚡ Demo chặn IP 20 giây và tự động gỡ"},
+			{"command": "ban", "description": "⛔ Chặn IP: /ban <IP> [20s|15m|1h|24h]"},
+			{"command": "unban", "description": "🔓 Gỡ chặn IP: /unban <IP>"},
+			{"command": "whitelist", "description": "⚪ Miễn trừ WAF: /whitelist <IP>"},
+			{"command": "sim", "description": "🎯 Giả lập tấn công: /sim sqli|xss|lfi"},
+			{"command": "help", "description": "📋 Xem hướng dẫn sử dụng chi tiết"},
+		},
+	}
+	body, _ := json.Marshal(payload)
+	client := &http.Client{Timeout: 8 * time.Second}
+	_, _ = client.Post(url, "application/json", bytes.NewBuffer(body))
+}
+
 // Long-polling loop for receiving Telegram commands and button callbacks
 func runTelegramPoller(ctx context.Context, token string) {
 	log.Printf("[Telegram Bot] Interactive listener started.")
+	go registerTelegramCommands(token)
 	client := &http.Client{Timeout: 30 * time.Second}
 
 	for {
@@ -468,18 +548,35 @@ func handleTelegramMessage(token string, chatID int64, text string) {
 		return
 	}
 
-	switch cmd {
-	case "/start", "/help":
-		sendHelpMessage(token, chatIDStr)
-	case "/stats":
+	norm := strings.ToLower(strings.TrimSpace(text))
+
+	// Match menu button presses directly from persistent bottom keyboard
+	if strings.Contains(norm, "thống kê") || cmd == "/stats" {
 		sendStatsMessage(token, chatIDStr)
-	case "/status":
-		sendStatusMessage(token, chatIDStr)
-	case "/latest":
+		return
+	}
+	if strings.Contains(norm, "5 tấn công") || strings.Contains(norm, "nhật ký") || cmd == "/latest" {
 		sendLatestAttacksMessage(token, chatIDStr)
+		return
+	}
+	if strings.Contains(norm, "trạng thái") || cmd == "/status" {
+		sendStatusMessage(token, chatIDStr)
+		return
+	}
+	if strings.Contains(norm, "20s") || strings.Contains(norm, "demo") || cmd == "/demo" {
+		testIP := "203.0.113.88"
+		banIP(token, chatIDStr, testIP, "20s", "Demo kịch bản chặn 20 giây & tự động gỡ đếm ngược")
+		return
+	}
+	if strings.Contains(norm, "trợ giúp") || strings.Contains(norm, "lệnh") || cmd == "/help" || cmd == "/start" || cmd == "/menu" {
+		sendHelpMessage(token, chatIDStr)
+		return
+	}
+
+	switch cmd {
 	case "/ban", "/block":
 		if len(parts) < 2 {
-			_ = SendTelegramMessage(token, chatIDStr, "⚠️ Cú pháp: <code>/ban &lt;IP&gt; [thời_gian: 15m|1h|24h|perm] [lý do]</code>\nVí dụ:\n• <code>/ban 1.2.3.4 15m Dò quét SQLi</code> (Cấm 15 phút)\n• <code>/ban 1.2.3.4 perm Hacker</code> (Cấm vĩnh viễn)")
+			_ = SendTelegramMessage(token, chatIDStr, "⚠️ Cú pháp: <code>/ban &lt;IP&gt; [thời_gian: 20s|15m|1h|24h|perm] [lý do]</code>\nVí dụ:\n• <code>/ban 1.2.3.4 20s Demo chặn nhanh</code> (Cấm 20 giây)\n• <code>/ban 1.2.3.4 15m Dò quét SQLi</code> (Cấm 15 phút)\n• <code>/ban 1.2.3.4 perm Hacker</code> (Cấm vĩnh viễn)")
 			return
 		}
 		ip := parts[1]
@@ -487,9 +584,9 @@ func handleTelegramMessage(token string, chatID int64, text string) {
 		reason := "Chặn qua Telegram Bot"
 
 		if len(parts) >= 3 {
-			// Check if parts[2] looks like duration (e.g., 15m, 1h, 24h, perm)
+			// Check if parts[2] looks like duration (e.g., 20s, 15m, 1h, 24h, perm)
 			possibleDur := strings.ToLower(parts[2])
-			if possibleDur == "perm" || possibleDur == "permanent" || strings.HasSuffix(possibleDur, "m") || strings.HasSuffix(possibleDur, "h") || strings.HasSuffix(possibleDur, "d") {
+			if possibleDur == "perm" || possibleDur == "permanent" || strings.HasSuffix(possibleDur, "s") || strings.HasSuffix(possibleDur, "m") || strings.HasSuffix(possibleDur, "h") || strings.HasSuffix(possibleDur, "d") {
 				durStr = possibleDur
 				if len(parts) > 3 {
 					reason = strings.Join(parts[3:], " ")
@@ -523,7 +620,7 @@ func handleTelegramMessage(token string, chatID int64, text string) {
 		}
 		simulateViaTelegram(token, chatIDStr, attackType)
 	default:
-		_ = SendTelegramMessage(token, chatIDStr, fmt.Sprintf("❓ Lệnh không hợp lệ: <code>%s</code>. Gõ <code>/help</code> để xem danh sách lệnh được hỗ trợ.", cmd))
+		_ = SendTelegramMessage(token, chatIDStr, fmt.Sprintf("❓ Lệnh không hợp lệ: <code>%s</code>. Bấm các nút ở bàn phím bên dưới hoặc gõ <code>/help</code> để xem hướng dẫn.", cmd))
 	}
 }
 
@@ -534,7 +631,11 @@ func handleTelegramCallback(token, queryID string, chatID int64, data string) {
 		return
 	}
 
-	if strings.HasPrefix(data, "ban:") {
+	if strings.HasPrefix(data, "ban20s:") {
+		ip := strings.TrimPrefix(data, "ban20s:")
+		banIP(token, chatIDStr, ip, "20s", "Chặn Demo 20s qua Telegram Alert Quick Action")
+		answerCallbackQuery(token, queryID, fmt.Sprintf("Đã kích hoạt Chặn Demo 20 giây đối với IP %s!", ip))
+	} else if strings.HasPrefix(data, "ban:") {
 		ip := strings.TrimPrefix(data, "ban:")
 		banIP(token, chatIDStr, ip, "15m", "Chặn tức thì qua Telegram Alert Quick Action (15 phút)")
 		answerCallbackQuery(token, queryID, fmt.Sprintf("Đã chặn IP %s trong 15 phút!", ip))
@@ -546,37 +647,34 @@ func handleTelegramCallback(token, queryID string, chatID int64, data string) {
 		answerCallbackQuery(token, queryID, "Đang tải thống kê WAF...")
 		sendStatsMessage(token, chatIDStr)
 	} else if data == "cmd_latest" {
-		answerCallbackQuery(token, queryID, "Đang tải nhật ký vi phạm gần nhất...")
+		answerCallbackQuery(token, queryID, "Đang tải 5 sự cố chặn gần nhất...")
 		sendLatestAttacksMessage(token, chatIDStr)
+	} else if data == "cmd_status" {
+		answerCallbackQuery(token, queryID, "Đang kiểm tra trạng thái máy chủ SOC...")
+		sendStatusMessage(token, chatIDStr)
 	}
 }
 
 func sendHelpMessage(token, chatID string) {
-	help := `🛡️ <b>CORAZA WAF SOC — TELEGRAM COMMAND CENTER</b>
+	help := `🛡️ <b>CORAZA WAF SOC — TRUNG TÂM ĐIỀU KHIỂN TELEGRAM</b>
 
-Chào mừng bạn đến với bot quản trị và giám sát an ninh <b>Coraza WAF + HAProxy</b>.
+Hệ thống điều phối an ninh <b>Coraza WAF + HAProxy Gateway</b>.
+Bạn có thể bấm trực tiếp các nút menu ở dưới bàn phím hoặc dùng các lệnh sau:
 
-<b>📋 Danh Sách Lệnh Khả Dụng:</b>
-• <code>/stats</code> : Thống kê lưu lượng & số lượt chặn trong ngày
-• <code>/status</code> : Trạng thái hệ điều hành, CPU, RAM & WAF Engine
-• <code>/latest</code> : Xem 5 cuộc tấn công vừa bị chặn gần nhất
-• <code>/ban &lt;IP&gt; [lý do]</code> : Chặn vĩnh viễn IP vào Blacklist
-• <code>/unban &lt;IP&gt;</code> : Gỡ bỏ IP khỏi danh sách chặn
+<b>📋 Bảng Lệnh Thao Tác:</b>
+• <code>/stats</code> : Thống kê lưu lượng & vi phạm WAF trong ngày
+• <code>/latest</code> : Xem 5 cuộc tấn công bị chặn gần nhất
+• <code>/status</code> : Trạng thái CPU, RAM & Coraza WAF Engine
+• <code>/demo</code> : Kích hoạt Demo chặn IP 20s và tự động gỡ
+• <code>/ban &lt;IP&gt; [20s|15m|1h|24h|perm] [lý do]</code> : Chặn IP vào Blacklist
+• <code>/unban &lt;IP&gt;</code> : Gỡ bỏ IP khỏi danh sách cấm
 • <code>/whitelist &lt;IP&gt; [lý do]</code> : Cho phép IP bỏ qua WAF
 • <code>/sim &lt;sqli|xss|lfi&gt;</code> : Giả lập cuộc tấn công để thử nghiệm cảnh báo
-• <code>/help</code> : Hiển thị bảng trợ giúp này
+• <code>/menu</code> : Mở lại bàn phím điều khiển nhanh
 
-<i>💡 Mỗi khi phát hiện tấn công, bot sẽ tự động gửi kèm nút bấm Quick Action để bạn chặn IP chỉ với 1 chạm!</i>`
+<i>💡 Khi có tấn công xảy ra, Bot sẽ gửi cảnh báo kèm nút bấm Chặn 20s / Chặn 15m để bạn phản ứng chỉ với 1 chạm!</i>`
 
-	markup := &InlineKeyboardMarkup{
-		InlineKeyboard: [][]InlineKeyboardButton{
-			{
-				{Text: "📊 Xem Thống Kê", CallbackData: "cmd_stats"},
-				{Text: "🔍 5 Tấn Công Gần Nhất", CallbackData: "cmd_latest"},
-			},
-		},
-	}
-	_ = SendTelegramMessageWithKeyboard(token, chatID, help, markup)
+	_ = SendTelegramMessage(token, chatID, help)
 }
 
 func sendStatsMessage(token, chatID string) {
@@ -671,15 +769,23 @@ func sendLatestAttacksMessage(token, chatID string) {
 		var ruleID int
 		if err := rows.Scan(&id, &ip, &attackType, &ruleID, &method, &uri, &ts); err == nil {
 			geo := LookupGeoIP(ip)
+			safeURI := html.EscapeString(uri)
+			if len(safeURI) > 80 {
+				safeURI = safeURI[:80] + "..."
+			}
+			safeAttack := html.EscapeString(attackType)
+			safeMethod := html.EscapeString(method)
+			safeIP := html.EscapeString(ip)
+
 			sb.WriteString(fmt.Sprintf(
-				"<b>#%d. %s [%s]</b>\n"+
+				"<b>#%d. %s</b>\n"+
 					"• IP: <code>%s</code> (%s %s)\n"+
-					"• Rule ID: <code>%d</code>\n"+
+					"• Rule: <code>#%d</code> | ⛔ <b>403 BLOCKED</b>\n"+
 					"• Request: <code>%s %s</code>\n"+
 					"• Lúc: <i>%s</i>\n\n",
-				id, attackType, "403 BLOCKED",
-				ip, geo.Flag, geo.Country,
-				ruleID, method, uri, ts,
+				id, safeAttack,
+				safeIP, geo.Flag, geo.Country,
+				ruleID, safeMethod, safeURI, ts,
 			))
 		}
 	}
@@ -702,16 +808,18 @@ func banIP(token, chatID, ip, durationStr, reason string) {
 	var expiresAtVal *string
 	durationDisplay := "🔒 Vô thời hạn (Vĩnh viễn)"
 	if expTime != nil {
-		formatted := expTime.Format("2006-01-02 15:04:05")
+		formatted := expTime.Format(time.RFC3339) // CRITICAL: Standard RFC3339 format prevents premature unban
 		expiresAtVal = &formatted
-		durationDisplay = fmt.Sprintf("⏳ %s (Hết hạn lúc: %s — Tự động gỡ cấm)", durationStr, formatted)
+		displayTime := expTime.In(VietnamLocation()).Format("15:04:05 02/01/2006")
+		durationDisplay = fmt.Sprintf("⏳ %s (Hết hạn lúc: %s — Tự động gỡ cấm)", durationStr, displayTime)
 	}
 
+	createdAtVal := VietnamNowRFC3339()
 	_, err := database.DB.Exec(
 		`INSERT INTO ip_rules (ip, rule_type, reason, created_at, expires_at)
-		 VALUES (?, 'blacklist', ?, CURRENT_TIMESTAMP, ?)
-		 ON CONFLICT(ip) DO UPDATE SET rule_type = 'blacklist', reason = excluded.reason, expires_at = excluded.expires_at`,
-		ip, reason, expiresAtVal,
+		 VALUES (?, 'blacklist', ?, ?, ?)
+		 ON CONFLICT(ip) DO UPDATE SET rule_type = 'blacklist', reason = excluded.reason, created_at = excluded.created_at, expires_at = excluded.expires_at`,
+		ip, reason, createdAtVal, expiresAtVal,
 	)
 	if err != nil {
 		_ = SendTelegramMessage(token, chatID, fmt.Sprintf("❌ Lỗi khi cập nhật cơ sở dữ liệu: %v", err))

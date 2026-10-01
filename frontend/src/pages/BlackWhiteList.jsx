@@ -285,7 +285,13 @@ export default function BlackWhiteList({
     let displayStr = '';
     if (days > 0) displayStr += `${days}d `;
     if (hours > 0 || days > 0) displayStr += `${hours}h `;
-    displayStr += `${mins}m ${secs}s`;
+    if (mins > 0 || hours > 0 || days > 0) {
+      displayStr += `${mins}m ${secs}s`;
+    } else {
+      displayStr += `${secs}s (Demo)`;
+    }
+
+    const isUrgent = diff <= 25000;
 
     return (
       <span
@@ -293,18 +299,22 @@ export default function BlackWhiteList({
           fontFamily: 'monospace',
           fontSize: '11.5px',
           fontWeight: 700,
-          color: '#0369a1',
-          background: '#e0f2fe',
+          color: isUrgent ? '#4338ca' : '#0369a1',
+          background: isUrgent ? '#eef2ff' : '#e0f2fe',
           padding: '2px 8px',
           borderRadius: '6px',
-          border: '1px solid #bae6fd',
+          border: isUrgent ? '1px solid #c7d2fe' : '1px solid #bae6fd',
           display: 'inline-flex',
           alignItems: 'center',
           gap: '5px',
           whiteSpace: 'nowrap',
+          animation: isUrgent ? 'pulse 1.5s infinite' : 'none',
         }}
       >
-        <i className="fa-solid fa-stopwatch fa-spin" style={{ animationDuration: '4s', fontSize: '10px' }}></i>
+        <i
+          className={isUrgent ? 'fa-solid fa-bolt' : 'fa-solid fa-stopwatch fa-spin'}
+          style={{ animationDuration: isUrgent ? '1s' : '4s', fontSize: '10px' }}
+        ></i>
         {displayStr}
       </span>
     );
@@ -721,6 +731,31 @@ export default function BlackWhiteList({
                       type="button"
                       onClick={() => {
                         if (onAddBlacklist) {
+                          onAddBlacklist(inspectorResult.ip, 'Chặn thử nghiệm 20 giây', '20s');
+                          setTimeout(() => handleInspectIP(), 200);
+                        }
+                      }}
+                      style={{
+                        fontSize: '11px',
+                        padding: '3px 8px',
+                        borderRadius: '4px',
+                        border: 'none',
+                        background: '#6366f1',
+                        color: '#fff',
+                        cursor: 'pointer',
+                        fontWeight: 700,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                      }}
+                      title="Chặn IP trong 20 giây để biểu diễn tính năng đếm ngược & tự động gỡ"
+                    >
+                      <i className="fa-solid fa-bolt"></i> Chặn 20s
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (onAddBlacklist) {
                           onAddBlacklist(inspectorResult.ip, 'Chặn từ công cụ kiểm tra', '15m');
                           setTimeout(() => handleInspectIP(), 200);
                         }
@@ -1100,23 +1135,42 @@ export default function BlackWhiteList({
                       <td style={{ padding: '10px 14px', textAlign: 'center' }}>
                         <div style={{ display: 'inline-flex', gap: '6px', alignItems: 'center' }}>
                           {isBlacklist && rule.expires_at && onQuickExtend && (
-                            <button
-                              type="button"
-                              onClick={() => onQuickExtend(rule.id, '15m')}
-                              title="Gia hạn cấm thêm 15 phút"
-                              style={{
-                                padding: '3px 6px',
-                                borderRadius: '4px',
-                                border: '1px solid #cbd5e1',
-                                background: '#f8fafc',
-                                color: '#0369a1',
-                                fontSize: '11px',
-                                fontWeight: 700,
-                                cursor: 'pointer',
-                              }}
-                            >
-                              +15m
-                            </button>
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => onQuickExtend(rule.ip, '20s')}
+                                title="Gia hạn cấm thêm 20 giây (Demo)"
+                                style={{
+                                  padding: '3px 6px',
+                                  borderRadius: '4px',
+                                  border: '1px solid #c7d2fe',
+                                  background: '#eef2ff',
+                                  color: '#4338ca',
+                                  fontSize: '11px',
+                                  fontWeight: 700,
+                                  cursor: 'pointer',
+                                }}
+                              >
+                                +20s
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => onQuickExtend(rule.ip, '15m')}
+                                title="Gia hạn cấm thêm 15 phút"
+                                style={{
+                                  padding: '3px 6px',
+                                  borderRadius: '4px',
+                                  border: '1px solid #cbd5e1',
+                                  background: '#f8fafc',
+                                  color: '#0369a1',
+                                  fontSize: '11px',
+                                  fontWeight: 700,
+                                  cursor: 'pointer',
+                                }}
+                              >
+                                +15m
+                              </button>
+                            </>
                           )}
                           <button
                             type="button"

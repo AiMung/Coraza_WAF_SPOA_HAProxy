@@ -471,6 +471,7 @@ const isValidIPOrCIDR = (val) => {
                     value={newIPDuration}
                     onChange={(e) => setNewIPDuration(e.target.value)}
                   >
+                    <option value="20s">⚡ 20 giây (Demo nhanh & Tự động gỡ)</option>
                     <option value="15m">⏳ 15 phút (Khuyên dùng để tránh False Positive)</option>
                     <option value="30m">⏳ 30 phút</option>
                     <option value="1h">⏳ 1 giờ</option>

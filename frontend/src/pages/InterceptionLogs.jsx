@@ -1542,6 +1542,27 @@ export default function InterceptionLogs({
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <button
                 type="button"
+                onClick={() => handleBatchBan('20s')}
+                title="Chặn thử nghiệm 20 giây (Demo nhanh & Tự động gỡ)"
+                style={{
+                  padding: '5px 10px',
+                  fontSize: '11px',
+                  fontWeight: 700,
+                  borderRadius: '6px',
+                  border: '1px solid #c7d2fe',
+                  background: '#eef2ff',
+                  color: '#4f46e5',
+                  cursor: 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '5px',
+                }}
+              >
+                <i className="fa-solid fa-bolt"></i> Chặn 20s (Demo)
+              </button>
+
+              <button
+                type="button"
                 onClick={() => handleBatchBan('15m')}
                 title="Chặn tạm thời 15 phút (Khuyên dùng)"
                 style={{
@@ -1956,6 +1977,31 @@ export default function InterceptionLogs({
                                 <div style={{ fontSize: '10px', color: '#64748b', padding: '4px 8px', fontWeight: 700, textTransform: 'uppercase' }}>
                                   Thời hạn cấm IP:
                                 </div>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (onAddBlacklist) onAddBlacklist(log.client_ip, `Chặn 20s demo từ Rule #${log.rule_id}`, '20s');
+                                    setActiveBanDropdown(null);
+                                  }}
+                                  style={{
+                                    width: '100%',
+                                    textAlign: 'left',
+                                    padding: '5px 8px',
+                                    fontSize: '11px',
+                                    background: '#eef2ff',
+                                    border: 'none',
+                                    color: '#4f46e5',
+                                    fontWeight: 700,
+                                    cursor: 'pointer',
+                                    borderRadius: '4px',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '6px',
+                                    marginBottom: '2px',
+                                  }}
+                                >
+                                  <i className="fa-solid fa-bolt"></i> ⚡ 20 giây (Demo)
+                                </button>
                                 <button
                                   type="button"
                                   onClick={() => {
@@ -2619,6 +2665,30 @@ export default function InterceptionLogs({
                   }}
                 >
                   <i className="fa-solid fa-circle-check"></i> Whitelist
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (onAddBlacklist) onAddBlacklist(selectedLogModal.client_ip, `Chặn 20s demo từ sự cố #${selectedLogModal.id}`, '20s');
+                    setSelectedLogModal(null);
+                  }}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: '6px',
+                    border: '1px solid #c7d2fe',
+                    background: '#eef2ff',
+                    color: '#4f46e5',
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                  }}
+                  title="Chặn 20 giây để biểu diễn tính năng đếm ngược & tự động gỡ"
+                >
+                  <i className="fa-solid fa-bolt"></i> Chặn 20s (Demo)
                 </button>
 
                 <button
